@@ -26,7 +26,8 @@ def render_dashboard(conn, truck_dict, truck_list):
 
     if selected_trucks:
         truck_ids = [truck_dict[t] for t in selected_trucks]
-        placeholders = ",".join(["?"] * len(truck_ids))
+        # PostgreSQL uses '%s' as parameter placeholders
+        placeholders = ",".join(["%s"] * len(truck_ids))
         truck_filter_sql = f" AND transactions.truck_id IN ({placeholders}) "
         params.extend(truck_ids)
     else:
@@ -51,7 +52,7 @@ def render_dashboard(conn, truck_dict, truck_list):
             SUM(CASE WHEN type='IN' THEN liters ELSE 0 END) as total_in,
             SUM(CASE WHEN type='OUT' THEN liters ELSE 0 END) as total_out
         FROM transactions
-        WHERE date BETWEEN ? AND ? {truck_filter_sql}
+        WHERE date BETWEEN %s AND %s {truck_filter_sql}
     """
 
     summary_df = pd.read_sql_query(summary_query, conn, params=params)
@@ -88,20 +89,22 @@ def render_dashboard(conn, truck_dict, truck_list):
     # =============================
     st.subheader("📦 Inventory Movement Summary")
 
+    # Replaced SQLite DATE('now') with PostgreSQL CURRENT_DATE 
     today_query = """
         SELECT 
             SUM(CASE WHEN type='IN' THEN liters ELSE 0 END) as today_in,
             SUM(CASE WHEN type='OUT' THEN liters ELSE 0 END) as today_out
         FROM transactions
-        WHERE date = DATE('now')
+        WHERE CAST(date AS DATE) = CURRENT_DATE
     """
 
+    # Replaced SQLite DATE calculation with PostgreSQL intervals
     week_query = """
         SELECT 
             SUM(CASE WHEN type='IN' THEN liters ELSE 0 END) as week_in,
             SUM(CASE WHEN type='OUT' THEN liters ELSE 0 END) as week_out
         FROM transactions
-        WHERE date >= DATE('now','-7 day')
+        WHERE CAST(date AS DATE) >= CURRENT_DATE - INTERVAL '7 days'
     """
 
     today_df = pd.read_sql_query(today_query, conn)
@@ -126,14 +129,15 @@ def render_dashboard(conn, truck_dict, truck_list):
     # =============================
     st.subheader("🚛 Live Truck Balance Overview")
 
+    # Replaced concatenation "||" with PostgreSQL "CONCAT" function
     balance_query = """
         SELECT 
-            trucks.emirate || ' ' || trucks.plate_code || ' ' || trucks.plate_number AS truck,
+            CONCAT(trucks.emirate, ' ', trucks.plate_code, ' ', trucks.plate_number) AS truck,
             SUM(CASE WHEN type='IN' THEN liters ELSE 0 END) -
             SUM(CASE WHEN type='OUT' THEN liters ELSE 0 END) as balance
         FROM transactions
         JOIN trucks ON transactions.truck_id = trucks.id
-        GROUP BY trucks.id
+        GROUP BY trucks.id, trucks.emirate, trucks.plate_code, trucks.plate_number
         ORDER BY balance ASC
     """
 
@@ -172,7 +176,7 @@ def render_dashboard(conn, truck_dict, truck_list):
             SUM(CASE WHEN type='IN' THEN liters ELSE 0 END) as total_in,
             SUM(CASE WHEN type='OUT' THEN liters ELSE 0 END) as total_out
         FROM transactions
-        WHERE date BETWEEN ? AND ? {truck_filter_sql}
+        WHERE date BETWEEN %s AND %s {truck_filter_sql}
         GROUP BY date
         ORDER BY date
     """
