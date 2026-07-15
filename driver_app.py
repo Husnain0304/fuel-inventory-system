@@ -56,7 +56,6 @@ if "logged_in" not in st.session_state:
     st.session_state.driver_name = ""
 
 # --- REFRESH PERSISTENCE (Query Parameters) ---
-# Check if a user is already logged in via URL parameter on page load/refresh
 query_params = st.query_params
 if "user" in query_params and not st.session_state.logged_in:
     saved_user = query_params["user"]
@@ -77,6 +76,11 @@ def update_from_liters():
 def update_from_gallons():
     st.session_state.liters_val = round(st.session_state.gallons_val * GAL_TO_LITERS, 3)
 
+# Helper function to reset input values safely before rendering
+def reset_inputs():
+    st.session_state.liters_val = 0.0
+    st.session_state.gallons_val = 0.0
+
 # --- LOGIN SCREEN ---
 if not st.session_state.logged_in:
     st.markdown("<h2 style='text-align: center; color: #008080;'>🔑 Driver Login</h2>", unsafe_allow_html=True)
@@ -89,7 +93,6 @@ if not st.session_state.logged_in:
         if username in DRIVERS and DRIVERS[username]["password"] == password:
             st.session_state.logged_in = True
             st.session_state.driver_name = DRIVERS[username]["name"]
-            # Save username to URL parameters to survive page refresh
             st.query_params["user"] = username
             st.rerun()
         else:
@@ -140,18 +143,19 @@ try:
             
         st.markdown("<br>", unsafe_allow_html=True)
         
+        # Handle form submission
         if st.button("🚀 SUBMIT FUEL ENTRY", type="primary", use_container_width=True):
             if liters <= 0:
                 st.error("⚠️ Please enter a valid fuel quantity!")
             else:
                 with st.spinner("Saving to system..."):
                     save_uplift(conn, truck_id, liters, supplier_id, st.session_state.driver_name)
+                
                 st.success(f"✅ Uplift of {liters:,.2f} L ({gallons:,.2f} Gal) Recorded Successfully!")
                 st.balloons()
                 
-                # Reset inputs on success
-                st.session_state.liters_val = 0.0
-                st.session_state.gallons_val = 0.0
+                # Reset inputs by calling our helper function first, then reloading safely
+                reset_inputs()
                 st.rerun()
                 
     conn.close()
@@ -161,11 +165,8 @@ except Exception as e:
 
 # --- LOGOUT BUTTON AT THE VERY BOTTOM ---
 st.markdown("<br><br><br><hr>", unsafe_allow_html=True)
-if st.button("🚪 Log Out", use_container_width=True, key="bottom_logout"):
+if st.button("🚪 Log Out", use_container_width=True, key="bottom_logout", on_click=reset_inputs):
     st.session_state.logged_in = False
     st.session_state.driver_name = ""
-    st.session_state.liters_val = 0.0
-    st.session_state.gallons_val = 0.0
-    # Clear the URL parameters on logout
     st.query_params.clear()
     st.rerun()
