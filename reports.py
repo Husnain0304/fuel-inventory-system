@@ -20,9 +20,10 @@ def render_reports(conn, truck_dict, truck_list):
     cost_price = settings_df.iloc[0]["cost_per_liter"]
     selling_price = settings_df.iloc[0]["selling_price_per_liter"]
 
+    # Modified: SQLite strftime is replaced with PostgreSQL TO_CHAR
     monthly_query = """
         SELECT 
-            strftime('%Y-%m', date) as month,
+            TO_CHAR(CAST(date AS TIMESTAMP), 'YYYY-MM') as month,
             SUM(CASE WHEN type='IN' THEN liters ELSE 0 END) as total_in,
             SUM(CASE WHEN type='OUT' THEN liters ELSE 0 END) as total_out
         FROM transactions
@@ -43,7 +44,6 @@ def render_reports(conn, truck_dict, truck_list):
         st.line_chart(monthly_df.set_index("month")[["Profit"]])
 
         # Export
-        import io
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine="openpyxl") as writer:
             monthly_df.to_excel(writer, index=False)
@@ -72,7 +72,8 @@ def render_reports(conn, truck_dict, truck_list):
 
     if selected_trucks:
         truck_ids = [truck_dict[t] for t in selected_trucks]
-        placeholders = ",".join(["?"] * len(truck_ids))
+        # PostgreSQL uses '%s' as placeholders
+        placeholders = ",".join(["%s"] * len(truck_ids))
         truck_filter_sql = f" AND transactions.truck_id IN ({placeholders}) "
         params.extend(truck_ids)
     else:
@@ -82,12 +83,13 @@ def render_reports(conn, truck_dict, truck_list):
     # SUMMARY TOTALS
     # =============================
 
+    # Modified: Placeholders updated to %s
     summary_query = f"""
         SELECT 
             SUM(CASE WHEN type='IN' THEN liters ELSE 0 END) as total_in,
             SUM(CASE WHEN type='OUT' THEN liters ELSE 0 END) as total_out
         FROM transactions
-        WHERE date BETWEEN ? AND ? {truck_filter_sql}
+        WHERE date BETWEEN %s AND %s {truck_filter_sql}
     """
 
     summary_df = pd.read_sql_query(summary_query, conn, params=params)
@@ -107,15 +109,17 @@ def render_reports(conn, truck_dict, truck_list):
     # TRUCK-WISE REPORT
     # =============================
 
+    # Modified: SQLite string concatenation '||' replaced with PostgreSQL CONCAT
+    # Placeholders updated to %s
     report_query = f"""
         SELECT 
-            trucks.emirate || ' ' || trucks.plate_code || ' ' || trucks.plate_number AS truck,
+            CONCAT(trucks.emirate, ' ', trucks.plate_code, ' ', trucks.plate_number) AS truck,
             SUM(CASE WHEN type='IN' THEN liters ELSE 0 END) as total_in,
             SUM(CASE WHEN type='OUT' THEN liters ELSE 0 END) as total_out
         FROM transactions
         JOIN trucks ON transactions.truck_id = trucks.id
-        WHERE date BETWEEN ? AND ? {truck_filter_sql}
-        GROUP BY trucks.id
+        WHERE date BETWEEN %s AND %s {truck_filter_sql}
+        GROUP BY trucks.id, trucks.emirate, trucks.plate_code, trucks.plate_number
         ORDER BY truck
     """
 
