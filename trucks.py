@@ -7,7 +7,7 @@ def log_action(cursor, conn, action_text):
     current_user = st.session_state.get("user", "System Admin")
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     cursor.execute(
-        "INSERT INTO audit_log (user, action, timestamp) VALUES (?, ?, ?)",
+        'INSERT INTO audit_log ("user", action, timestamp) VALUES (%s, %s, %s)',
         (current_user, action_text, timestamp)
     )
     conn.commit()
@@ -36,7 +36,7 @@ def render_trucks(conn, cursor):
     if st.button("Add Truck"):
         try:
             cursor.execute(
-                "INSERT INTO trucks (emirate, plate_code, plate_number, selling_price_per_liter) VALUES (?, ?, ?, ?)",
+                "INSERT INTO trucks (emirate, plate_code, plate_number, selling_price_per_liter) VALUES (%s, %s, %s, %s)",
                 (
                     emirate,
                     plate_code.upper(),
@@ -51,8 +51,8 @@ def render_trucks(conn, cursor):
             conn.commit()
             st.success("Truck added ✅")
             st.rerun()
-        except:
-            st.error("Truck already exists")
+        except Exception as e:
+            st.error("Truck already exists or a database error occurred.")
 
     st.markdown("---")
 
@@ -108,11 +108,11 @@ def render_trucks(conn, cursor):
                     if not confirm_checkbox:
                         st.error("Please check the confirmation box first!")
                     else:
-                        # 1. Delete associated transactions to keep database happy
-                        cursor.execute("DELETE FROM transactions WHERE truck_id = ?", (truck_id,))
+                        # 1. Delete associated transactions to keep database happy using Postgres '%s' syntax
+                        cursor.execute("DELETE FROM transactions WHERE truck_id = %s", (truck_id,))
                         
-                        # 2. Delete the truck itself
-                        cursor.execute("DELETE FROM trucks WHERE id=?", (truck_id,))
+                        # 2. Delete the truck itself using Postgres '%s' syntax
+                        cursor.execute("DELETE FROM trucks WHERE id=%s", (truck_id,))
                         
                         # 3. Log the entire delete action with details
                         log_action(cursor, conn, f"DELETED TRUCK & HISTORY: Removed truck '{full_name}' and all associated transactions.")
