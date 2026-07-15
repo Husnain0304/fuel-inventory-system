@@ -1,12 +1,10 @@
 import streamlit as st
-import bcrypt
+import hashlib
 import pandas as pd
 
-# Security tool to encrypt plain text passwords
+# Uses your exact hashing method from auth.py
 def hash_password(password: str) -> str:
-    salt = bcrypt.gensalt()
-    hashed = bcrypt.hashpw(password.encode('utf-8'), salt)
-    return hashed.decode('utf-8')
+    return hashlib.sha256(password.encode()).hexdigest()
 
 def render_user_management(conn, cursor):
     st.title("👤 User Credentials Management")
@@ -15,9 +13,9 @@ def render_user_management(conn, cursor):
     st.subheader("➕ Create New User Account")
     
     with st.form("create_user_form", clear_on_submit=True):
-        new_username = st.text_input("Username").strip().lower()
+        new_username = st.text_input("Username").strip()
         new_password = st.text_input("Password", type="password")
-        new_role = st.selectbox("Assign Role", ["operator", "admin"])
+        new_role = st.selectbox("Assign Role", ["OPERATOR", "ADMIN"])
         
         submit_btn = st.form_submit_button("Create User")
         
@@ -28,9 +26,9 @@ def render_user_management(conn, cursor):
                 try:
                     hashed_pw = hash_password(new_password)
                     
-                    # Insert user into Neon database
+                    # Insert user matching your exact column names
                     cursor.execute("""
-                        INSERT INTO users (username, password_hash, role) 
+                        INSERT INTO users (username, password, role) 
                         VALUES (%s, %s, %s)
                     """, (new_username, hashed_pw, new_role))
                     
@@ -45,10 +43,11 @@ def render_user_management(conn, cursor):
 
     st.subheader("👥 Current Accounts in System")
     
+    # Query your exact table schema
     users_df = pd.read_sql_query("SELECT id, username, role FROM users ORDER BY username", conn)
     
     if users_df.empty:
-        st.warning("No registered users found. Create your first user above!")
+        st.warning("No registered users found.")
     else:
         for _, row in users_df.iterrows():
             user_id = row['id']
