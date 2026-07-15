@@ -2,7 +2,6 @@ import streamlit as st
 import pandas as pd
 import io
 
-
 def render_ledger(conn, truck_dict, truck_list):
 
     st.title("📘 Truck Ledger (Accounting View)")
@@ -41,8 +40,8 @@ def render_ledger(conn, truck_dict, truck_list):
             SUM(CASE WHEN type='IN' THEN liters ELSE 0 END) -
             SUM(CASE WHEN type='OUT' THEN liters ELSE 0 END)
         FROM transactions
-        WHERE truck_id = ?
-        AND date < ?
+        WHERE truck_id = %s
+        AND date < %s
     """
 
     opening_df = pd.read_sql_query(
@@ -65,10 +64,11 @@ def render_ledger(conn, truck_dict, truck_list):
         SELECT 
             date,
             type,
-            liters
+            liters,
+            COALESCE(created_by, 'System') AS created_by
         FROM transactions
-        WHERE truck_id = ?
-        AND date BETWEEN ? AND ?
+        WHERE truck_id = %s
+        AND date BETWEEN %s AND %s
         ORDER BY date
     """
 
@@ -113,8 +113,11 @@ def render_ledger(conn, truck_dict, truck_list):
     st.subheader("Ledger Details")
 
     display_df = ledger_df[
-        ["date", "IN", "OUT", "Cost", "Revenue", "Profit", "Running Balance", "Running Profit"]
+        ["date", "IN", "OUT", "Cost", "Revenue", "Profit", "Running Balance", "Running Profit", "created_by"]
     ]
+    
+    # Rename for cleaner table headers
+    display_df = display_df.rename(columns={"created_by": "Recorded By"})
 
     st.dataframe(display_df, use_container_width=True)
 
