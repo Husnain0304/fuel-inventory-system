@@ -8,11 +8,12 @@ def hash_password(password):
 
 def ensure_default_admin(conn):
     cursor = conn.cursor()
-    # PostgreSQL uses %s placeholders instead of ?
-    cursor.execute("SELECT * FROM users WHERE username = %s", ("admin",))
-    result = cursor.fetchone()
+    # Safe check: Count how many users exist in the table
+    cursor.execute("SELECT COUNT(*) FROM users")
+    user_count = cursor.fetchone()[0]
     
-    if not result:
+    # Only create the default admin if the table is completely empty
+    if user_count == 0:
         cursor.execute(
             "INSERT INTO users (username, password, role) VALUES (%s, %s, %s)",
             ("admin", hash_password("admin123"), "ADMIN")
@@ -30,7 +31,6 @@ def login_system(conn):
 
         if submitted:
             cursor = conn.cursor()
-            # PostgreSQL uses %s placeholders instead of ?
             cursor.execute(
                 "SELECT password, role FROM users WHERE username = %s",
                 (username,)
