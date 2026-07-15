@@ -1,14 +1,19 @@
-import sqlite3
+import os
+import psycopg2
+import streamlit as st
 
 def get_connection():
-    return sqlite3.connect("fuel_inventory.db", check_same_thread=False)
+    # Streamlit Cloud automatically reads from the secrets we saved in Step 2
+    conn_url = st.secrets["connections"]["postgresql"]["url"]
+    return psycopg2.connect(conn_url)
 
 def init_db(conn):
     cursor = conn.cursor()
 
+    # PostgreSQL compatible schema (using SERIAL primary keys)
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS trucks (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id SERIAL PRIMARY KEY,
         emirate TEXT NOT NULL,
         plate_code TEXT NOT NULL,
         plate_number TEXT NOT NULL,
@@ -17,10 +22,9 @@ def init_db(conn):
     )
     """)
 
-    # We only keep the correct transactions table schema here:
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS transactions (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id SERIAL PRIMARY KEY,
         truck_id INTEGER,
         date TEXT,
         liters REAL,
@@ -32,7 +36,7 @@ def init_db(conn):
 
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS users (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id SERIAL PRIMARY KEY,
         username TEXT UNIQUE,
         password TEXT,
         role TEXT CHECK(role IN ('ADMIN','OPERATOR'))
@@ -41,8 +45,8 @@ def init_db(conn):
 
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS audit_log (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        user TEXT,
+        id SERIAL PRIMARY KEY,
+        "user" TEXT,
         action TEXT,
         timestamp TEXT
     )
@@ -50,7 +54,7 @@ def init_db(conn):
 
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS settings (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id SERIAL PRIMARY KEY,
         cost_per_liter REAL,
         selling_price_per_liter REAL,
         minimum_stock_level REAL
@@ -59,7 +63,7 @@ def init_db(conn):
 
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS refill_requests (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id SERIAL PRIMARY KEY,
         truck_id INTEGER,
         requested_liters REAL,
         status TEXT CHECK(status IN ('PENDING','APPROVED','REJECTED')) DEFAULT 'PENDING',
@@ -68,10 +72,9 @@ def init_db(conn):
     )
     """)
 
-    # Create the uploaded_files table to track duplicate uploads
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS uploaded_files (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id SERIAL PRIMARY KEY,
         file_name TEXT UNIQUE,
         uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
