@@ -38,8 +38,8 @@ menu_options = [
     "⚙️ Settings"
 ]
 
-# Only show "Manage Users" if the logged-in user's role is "admin"
-if st.session_state.get("role") == "admin":
+# FIX: Check for uppercase "ADMIN" to match your auth.py role
+if st.session_state.get("role") == "ADMIN":
     menu_options.append("👥 Manage Users")
 
 page = st.sidebar.radio("Navigation", menu_options)
