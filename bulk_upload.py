@@ -7,11 +7,11 @@ def render_bulk_upload(conn, cursor, truck_dict, truck_list):
     
     st.info("💡 Upload Excel with columns: **date** (DD-MM-YYYY), **truck**, **liters**")
 
-    # Initialize the tracking table if not already done
+    # Initialize the tracking table (PostgreSQL uses SERIAL instead of AUTOINCREMENT)
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS uploaded_files (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            file_name TEXT UNIQUE,
+            id SERIAL PRIMARY KEY,
+            file_name VARCHAR(255) UNIQUE,
             uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
@@ -30,7 +30,7 @@ def render_bulk_upload(conn, cursor, truck_dict, truck_list):
         # -------------------------------------------------------------
         # Check if this file name has been uploaded before
         duplicate_file_check = pd.read_sql_query(
-            "SELECT uploaded_at FROM uploaded_files WHERE file_name = ?", 
+            "SELECT uploaded_at FROM uploaded_files WHERE file_name = %s", 
             conn, 
             params=[file_name]
         )
@@ -130,11 +130,11 @@ def render_bulk_upload(conn, cursor, truck_dict, truck_list):
                     })
                     continue
 
-                # Duplicate Transaction Check
+                # Duplicate Transaction Check using %s
                 truck_id = truck_dict[raw_truck]
                 dup_check = pd.read_sql_query("""
                     SELECT id FROM transactions 
-                    WHERE truck_id = ? AND date = ? AND liters = ? AND type = 'OUT'
+                    WHERE truck_id = %s AND date = %s AND liters = %s AND type = 'OUT'
                 """, conn, params=[truck_id, str(parsed_date), liters_val])
 
                 if not dup_check.empty:
@@ -146,12 +146,13 @@ def render_bulk_upload(conn, cursor, truck_dict, truck_list):
                         "Reason": "Duplicate (Already exists in database)"
                     })
                 else:
+                    # Insert and return serial ID using PostgreSQL syntax
                     cursor.execute("""
                         INSERT INTO transactions (truck_id, date, liters, type) 
-                        VALUES (?, ?, ?, 'OUT')
+                        VALUES (%s, %s, %s, 'OUT') RETURNING id
                     """, (truck_id, str(parsed_date), liters_val))
                     
-                    last_id = cursor.lastrowid
+                    last_id = cursor.fetchone()[0]
                     inserted_ids.append(last_id)
                     
                     added_records.append({
@@ -167,15 +168,15 @@ def render_bulk_upload(conn, cursor, truck_dict, truck_list):
                 conn.commit()
                 st.session_state["last_imported_ids"] = inserted_ids
                 
-                # Log filename so it can't be uploaded again without bypass
-                cursor.execute(
-                    "INSERT OR REPLACE INTO uploaded_files (file_name) VALUES (?)", 
-                    (file_name,)
-                )
+                # PostgreSQL standard ON CONFLICT syntax for upserts
+                cursor.execute("""
+                    INSERT INTO uploaded_files (file_name) VALUES (%s)
+                    ON CONFLICT (file_name) DO UPDATE SET uploaded_at = CURRENT_TIMESTAMP
+                """, (file_name,))
                 conn.commit()
 
             # ==========================================
-            # 3. RENDER RESULTS & SUMMARY TABLES
+            # RENDER RESULTS & SUMMARY TABLES
             # ==========================================
             st.markdown("---")
             st.subheader("📊 Import Summary")
@@ -196,11 +197,13 @@ def render_bulk_upload(conn, cursor, truck_dict, truck_list):
                 if st.button("🗑️ Delete/Rollback Whole Transaction Upload", type="primary"):
                     if st.session_state["last_imported_ids"]:
                         ids_to_delete = st.session_state["last_imported_ids"]
-                        placeholders = ",".join(["?"] * len(ids_to_delete))
-                        cursor.execute(f"DELETE FROM transactions WHERE id IN ({placeholders})", ids_to_delete)
+                        placeholders = ",".join(["%s"] * len(ids_to_delete))
+                        
+                        # Pass parameters as a tuple to the execution query
+                        cursor.execute(f"DELETE FROM transactions WHERE id IN ({placeholders})", tuple(ids_to_delete))
                         
                         # Also remove the file name log so they can upload it clean again
-                        cursor.execute("DELETE FROM uploaded_files WHERE file_name = ?", (file_name,))
+                        cursor.execute("DELETE FROM uploaded_files WHERE file_name = %s", (file_name,))
                         conn.commit()
                         
                         st.session_state["last_imported_ids"] = []
