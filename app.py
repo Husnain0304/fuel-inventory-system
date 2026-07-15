@@ -1,6 +1,5 @@
 import streamlit as st
 import pandas as pd
-from sqlalchemy import text
 from database import get_connection, init_db
 from dashboard import render_dashboard
 from transactions import render_transactions
@@ -39,21 +38,25 @@ page = st.sidebar.radio(
     ]
 )
 
-# Query trucks list using SQLAlchemy
-with conn.session as session:
-    result = session.execute(text("SELECT id, emirate, plate_code, plate_number FROM trucks")).fetchall()
+# Use standard cursor to query the trucks list
+with conn.cursor() as cursor:
+    cursor.execute("SELECT id, emirate, plate_code, plate_number FROM trucks")
+    result = cursor.fetchall()
     
 truck_dict = {f"{t[1]} {t[2]} {t[3]}": t[0] for t in result}
 truck_list = list(truck_dict.keys())
+
+# Recreate cursor for sub-pages that expect it
+cursor = conn.cursor()
 
 if page == "📊 Dashboard":
     render_dashboard(conn, truck_dict, truck_list)
 
 elif page == "🔄 Transactions":
-    render_transactions(conn, None, truck_dict, truck_list)
+    render_transactions(conn, cursor, truck_dict, truck_list)
 
 elif page == "🚛 Manage Trucks":
-    render_trucks(conn, None)
+    render_trucks(conn, cursor)
 
 elif page == "📅 Reports":
     render_reports(conn, truck_dict, truck_list)
@@ -62,16 +65,16 @@ elif page == "📘 Ledger":
     render_ledger(conn, truck_dict, truck_list)
 
 elif page == "📤 Bulk Delivery Upload":
-    render_bulk_upload(conn, None, truck_dict, truck_list)
+    render_bulk_upload(conn, cursor, truck_dict, truck_list)
 
 elif page == "✅ Refill Approvals":
     from approvals import render_approvals
-    render_approvals(conn, None)
+    render_approvals(conn, cursor)
 
 elif page == "📜 Audit Log":
-    # Pull audit logs directly using Streamlit SQL query
-    df = conn.query('SELECT * FROM audit_log ORDER BY id DESC', ttl=0)
+    # Pull audit logs directly using Pandas
+    df = pd.read_sql_query("SELECT * FROM audit_log ORDER BY id DESC", conn)
     st.dataframe(df)
 
 elif page == "⚙️ Settings":
-    render_settings(conn, None)
+    render_settings(conn, cursor)
