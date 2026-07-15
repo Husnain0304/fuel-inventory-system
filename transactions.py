@@ -3,6 +3,7 @@ import pandas as pd
 from datetime import datetime
 
 def auto_setup_db(cursor, conn):
+    # 1. Ensure audit_log table exists
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS audit_log (
         id SERIAL PRIMARY KEY,
@@ -11,6 +12,26 @@ def auto_setup_db(cursor, conn):
         timestamp TEXT
     )
     """)
+    
+    # 2. Ensure suppliers table exists
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS suppliers (
+        id SERIAL PRIMARY KEY,
+        name TEXT UNIQUE NOT NULL
+    )
+    """)
+    
+    # 3. Ensure a default supplier exists so the application doesn't break
+    cursor.execute("INSERT INTO suppliers (name) VALUES ('Default Supplier') ON CONFLICT (name) DO NOTHING")
+    
+    # 4. Safely add missing columns to the transactions table if they don't exist
+    cursor.execute("""
+    ALTER TABLE transactions ADD COLUMN IF NOT EXISTS supplier_id INTEGER REFERENCES suppliers(id);
+    """)
+    cursor.execute("""
+    ALTER TABLE transactions ADD COLUMN IF NOT EXISTS transfer_partner_id INTEGER;
+    """)
+    
     conn.commit()
 
 def log_action(cursor, conn, action_text):
@@ -33,6 +54,7 @@ def get_balance(conn, truck_id):
     return df.iloc[0, 0] or 0
 
 def render_transactions(conn, cursor, truck_dict, truck_list):
+    # Setup tables and columns first to prevent Pandas query errors
     auto_setup_db(cursor, conn)
 
     if "role" not in st.session_state:
