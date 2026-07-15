@@ -14,12 +14,27 @@ from users_admin import render_user_management
 
 st.set_page_config(page_title="FILLIT", layout="wide")
 
+# ==========================================
+# 🔄 PERSISTENCE ENGINE: RESTORE SESSION ON REFRESH
+# ==========================================
+# If session_state was cleared by a refresh, but URL parameters exist, restore them
+if "user" not in st.session_state and "user" in st.query_params:
+    st.session_state["user"] = st.query_params["user"]
+if "role" not in st.session_state and "role" in st.query_params:
+    st.session_state["role"] = st.query_params["role"]
+
 # Connect to Neon
 conn = get_connection()
 init_db(conn)
 
 # Require user login before loading the rest of the application
 require_login(conn)
+
+# Save login states to URL immediately after successful login
+if "user" in st.session_state:
+    st.query_params["user"] = st.session_state["user"]
+if "role" in st.session_state:
+    st.query_params["role"] = st.session_state["role"]
 
 st.markdown("<h1 style='text-align:center;color:#c41e3a;'>FILLIT</h1>", unsafe_allow_html=True)
 st.markdown(f"Logged in as: {st.session_state['user']} ({st.session_state['role']})")
@@ -42,14 +57,23 @@ menu_options = [
 if st.session_state.get("role") == "ADMIN":
     menu_options.append("👥 Manage Users")
 
-page = st.sidebar.radio("Navigation", menu_options)
+# Determine which page should be selected by default from URL parameters
+default_index = 0
+if "page" in st.query_params and st.query_params["page"] in menu_options:
+    default_index = menu_options.index(st.query_params["page"])
+
+# Render navigation and save choice to URL instantly when clicked
+page = st.sidebar.radio("Navigation", menu_options, index=default_index)
+st.query_params["page"] = page
 
 # ---> ADD LOG OUT BUTTON TO THE SIDEBAR
 st.sidebar.markdown("---")
 if st.sidebar.button("🚪 Log Out", use_container_width=True):
-    # Clear the session state to log the user out
+    # Clear session state
     for key in list(st.session_state.keys()):
         del st.session_state[key]
+    # Clear URL parameters completely on logout
+    st.query_params.clear()
     st.rerun()
 
 # Use standard database cursor to query the trucks list
