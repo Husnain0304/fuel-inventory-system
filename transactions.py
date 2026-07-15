@@ -137,22 +137,36 @@ def render_transactions(conn, cursor, truck_dict, truck_list):
         col_t1, col_t2 = st.columns(2)
         
         source_truck = col_t1.selectbox("From Truck (Source)", truck_list, key="transfer_source")
-        dest_truck = col_t2.selectbox("To Truck (Destination)", [t for t in truck_list if t != source_truck], key="transfer_dest")
+        
+        # Filter out the source truck so a truck can't transfer to itself
+        available_dest_trucks = [t for t in truck_list if t != source_truck]
+        
+        if not available_dest_trucks:
+            col_t2.warning("Add more trucks to enable transfers.")
+            dest_truck = None
+        else:
+            dest_truck = col_t2.selectbox("To Truck (Destination)", available_dest_trucks, key="transfer_dest")
 
+        # Safely acquire IDs only if we have a valid destination choice
         source_id = truck_dict[source_truck]
-        dest_id = truck_dict[dest_truck]
-
         source_balance = get_balance(conn, source_id)
         col_t1.info(f"Source Balance: {source_balance:,.2f} L")
         
-        dest_balance = get_balance(conn, dest_id)
-        col_t2.info(f"Destination Balance: {dest_balance:,.2f} L")
+        if dest_truck:
+            dest_id = truck_dict[dest_truck]
+            dest_balance = get_balance(conn, dest_id)
+            col_t2.info(f"Destination Balance: {dest_balance:,.2f} L")
+        else:
+            dest_id = None
+            col_t2.info("Destination Balance: 0.00 L")
 
         transfer_date = st.date_input("Transfer Date", key="transfer_date")
         transfer_liters = st.number_input("Transfer Liters", min_value=0.0, key="transfer_liters")
 
         if st.button("Confirm Fuel Transfer", type="primary"):
-            if transfer_liters <= 0:
+            if not dest_truck:
+                st.error("❌ Cannot transfer fuel without a valid destination truck.")
+            elif transfer_liters <= 0:
                 st.error("Please enter liters to transfer.")
             elif transfer_liters > source_balance:
                 st.error("❌ Source truck does not have enough inventory!")
