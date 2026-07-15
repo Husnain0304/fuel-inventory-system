@@ -38,43 +38,46 @@ page = st.sidebar.radio(
     ]
 )
 
+# Extract the raw connection to use cursors
+raw_conn = conn.driver_connection
+
 # Use standard cursor to query the trucks list
-with conn.cursor() as cursor:
+with raw_conn.cursor() as cursor:
     cursor.execute("SELECT id, emirate, plate_code, plate_number FROM trucks")
     result = cursor.fetchall()
     
 truck_dict = {f"{t[1]} {t[2]} {t[3]}": t[0] for t in result}
 truck_list = list(truck_dict.keys())
 
-# Recreate cursor for sub-pages that expect it
-cursor = conn.cursor()
+# Create cursor for sub-pages
+cursor = raw_conn.cursor()
 
 if page == "📊 Dashboard":
-    render_dashboard(conn, truck_dict, truck_list)
+    render_dashboard(raw_conn, truck_dict, truck_list)
 
 elif page == "🔄 Transactions":
-    render_transactions(conn, cursor, truck_dict, truck_list)
+    render_transactions(raw_conn, cursor, truck_dict, truck_list)
 
 elif page == "🚛 Manage Trucks":
-    render_trucks(conn, cursor)
+    render_trucks(raw_conn, cursor)
 
 elif page == "📅 Reports":
-    render_reports(conn, truck_dict, truck_list)
+    render_reports(raw_conn, truck_dict, truck_list)
 
 elif page == "📘 Ledger":
-    render_ledger(conn, truck_dict, truck_list)
+    render_ledger(raw_conn, truck_dict, truck_list)
 
 elif page == "📤 Bulk Delivery Upload":
-    render_bulk_upload(conn, cursor, truck_dict, truck_list)
+    render_bulk_upload(raw_conn, cursor, truck_dict, truck_list)
 
 elif page == "✅ Refill Approvals":
     from approvals import render_approvals
-    render_approvals(conn, cursor)
+    render_approvals(raw_conn, cursor)
 
 elif page == "📜 Audit Log":
-    # Pull audit logs directly using Pandas
-    df = pd.read_sql_query("SELECT * FROM audit_log ORDER BY id DESC", conn)
+    # Pull audit logs directly using Pandas and the raw connection
+    df = pd.read_sql_query("SELECT * FROM audit_log ORDER BY id DESC", raw_conn)
     st.dataframe(df)
 
 elif page == "⚙️ Settings":
-    render_settings(conn, cursor)
+    render_settings(raw_conn, cursor)
