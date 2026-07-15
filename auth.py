@@ -8,13 +8,13 @@ def hash_password(password):
 
 def ensure_default_admin(conn):
     cursor = conn.cursor()
-    # SQLite uses '?' placeholders
-    cursor.execute("SELECT * FROM users WHERE username = ?", ("admin",))
+    # PostgreSQL uses %s placeholders instead of ?
+    cursor.execute("SELECT * FROM users WHERE username = %s", ("admin",))
     result = cursor.fetchone()
     
     if not result:
         cursor.execute(
-            "INSERT INTO users (username, password, role) VALUES (?, ?, ?)",
+            "INSERT INTO users (username, password, role) VALUES (%s, %s, %s)",
             ("admin", hash_password("admin123"), "ADMIN")
         )
         conn.commit()
@@ -30,8 +30,9 @@ def login_system(conn):
 
         if submitted:
             cursor = conn.cursor()
+            # PostgreSQL uses %s placeholders instead of ?
             cursor.execute(
-                "SELECT password, role FROM users WHERE username = ?",
+                "SELECT password, role FROM users WHERE username = %s",
                 (username,)
             )
             result = cursor.fetchone()
