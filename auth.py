@@ -7,8 +7,9 @@ def hash_password(password):
 
 
 def ensure_default_admin(conn):
-    with conn.cursor() as cursor:
-        # PostgreSQL uses %s placeholders instead of ?
+    # Extract raw connection
+    raw_conn = conn.driver_connection
+    with raw_conn.cursor() as cursor:
         cursor.execute("SELECT * FROM users WHERE username = %s", ("admin",))
         result = cursor.fetchone()
         
@@ -17,7 +18,7 @@ def ensure_default_admin(conn):
                 "INSERT INTO users (username, password, role) VALUES (%s, %s, %s)",
                 ("admin", hash_password("admin123"), "ADMIN")
             )
-            conn.commit()
+            raw_conn.commit()
 
 
 def login_system(conn):
@@ -29,7 +30,8 @@ def login_system(conn):
         submitted = st.form_submit_button("Login")
 
         if submitted:
-            with conn.cursor() as cursor:
+            raw_conn = conn.driver_connection
+            with raw_conn.cursor() as cursor:
                 cursor.execute(
                     "SELECT password, role FROM users WHERE username = %s",
                     (username,)
