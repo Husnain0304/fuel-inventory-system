@@ -31,6 +31,9 @@ def auto_setup_db(cursor, conn):
     cursor.execute("""
     ALTER TABLE transactions ADD COLUMN IF NOT EXISTS transfer_partner_id INTEGER;
     """)
+    cursor.execute("""
+    ALTER TABLE transactions ADD COLUMN IF NOT EXISTS created_by TEXT;
+    """)
     
     conn.commit()
 
@@ -82,6 +85,9 @@ def render_transactions(conn, cursor, truck_dict, truck_list):
         "📋 View Audit Logs"
     ])
 
+    # Get active user info
+    active_user = st.session_state.get("user", "Admin_User")
+
     # ==========================================
     # TAB 1: ADD ENTRY (UPLIFT / DELIVERY)
     # ==========================================
@@ -105,9 +111,9 @@ def render_transactions(conn, cursor, truck_dict, truck_list):
                     st.error("Please enter a valid amount of liters.")
                 else:
                     cursor.execute("""
-                        INSERT INTO transactions (truck_id, date, liters, type, supplier_id) 
-                        VALUES (%s, %s, %s, 'IN', %s)
-                    """, (truck_id, str(date), liters, supplier_id))
+                        INSERT INTO transactions (truck_id, date, liters, type, supplier_id, created_by) 
+                        VALUES (%s, %s, %s, 'IN', %s, %s)
+                    """, (truck_id, str(date), liters, supplier_id, active_user))
                     conn.commit()
                     log_action(cursor, conn, f"Added Uplift of {liters:,.2f} L from Supplier '{selected_supplier_name}' for Truck '{truck}' on date {date}")
                     st.success("Uplift recorded successfully! ✅")
@@ -121,9 +127,9 @@ def render_transactions(conn, cursor, truck_dict, truck_list):
                     st.error("❌ Insufficient balance in this truck!")
                 else:
                     cursor.execute("""
-                        INSERT INTO transactions (truck_id, date, liters, type) 
-                        VALUES (%s, %s, %s, 'OUT')
-                    """, (truck_id, str(date), liters))
+                        INSERT INTO transactions (truck_id, date, liters, type, created_by) 
+                        VALUES (%s, %s, %s, 'OUT', %s)
+                    """, (truck_id, str(date), liters, active_user))
                     conn.commit()
                     log_action(cursor, conn, f"Added Delivery of {liters:,.2f} L for Truck '{truck}' on date {date}")
                     st.success("Delivery recorded successfully! ✅")
@@ -173,15 +179,15 @@ def render_transactions(conn, cursor, truck_dict, truck_list):
             else:
                 try:
                     cursor.execute("""
-                        INSERT INTO transactions (truck_id, date, liters, type) 
-                        VALUES (%s, %s, %s, 'OUT') RETURNING id
-                    """, (source_id, str(transfer_date), transfer_liters))
+                        INSERT INTO transactions (truck_id, date, liters, type, created_by) 
+                        VALUES (%s, %s, %s, 'OUT', %s) RETURNING id
+                    """, (source_id, str(transfer_date), transfer_liters, active_user))
                     source_tx_id = cursor.fetchone()[0]
 
                     cursor.execute("""
-                        INSERT INTO transactions (truck_id, date, liters, type) 
-                        VALUES (%s, %s, %s, 'IN') RETURNING id
-                    """, (dest_id, str(transfer_date), transfer_liters))
+                        INSERT INTO transactions (truck_id, date, liters, type, created_by) 
+                        VALUES (%s, %s, %s, 'IN', %s) RETURNING id
+                    """, (dest_id, str(transfer_date), transfer_liters, active_user))
                     dest_tx_id = cursor.fetchone()[0]
 
                     cursor.execute("UPDATE transactions SET transfer_partner_id = %s WHERE id = %s", (dest_tx_id, source_tx_id))
@@ -219,7 +225,7 @@ def render_transactions(conn, cursor, truck_dict, truck_list):
     with tab4:
         st.subheader("🧐 Historical Audit & Filter Engine")
 
-        # Fetch entire history join
+        # Fetch entire history join with created_by field included
         history_df = pd.read_sql_query("""
             SELECT transactions.id AS id,
                    transactions.date,
@@ -228,7 +234,8 @@ def render_transactions(conn, cursor, truck_dict, truck_list):
                    transactions.liters,
                    transactions.type,
                    suppliers.name AS supplier_name,
-                   transactions.transfer_partner_id
+                   transactions.transfer_partner_id,
+                   COALESCE(transactions.created_by, 'System') AS created_by
             FROM transactions
             JOIN trucks ON transactions.truck_id = trucks.id
             LEFT JOIN suppliers ON transactions.supplier_id = suppliers.id
@@ -261,8 +268,8 @@ def render_transactions(conn, cursor, truck_dict, truck_list):
                     ["All Transactions", "Standard Uplift (IN)", "Standard Delivery (OUT)", "Internal Transfers Only"]
                 )
                 
-                # 4. Global Text Search (Filters across Supplier names or IDs)
-                search_query = col_f4.text_input("Global Search (Supplier name, ID, etc.)", "").strip().lower()
+                # 4. Global Text Search
+                search_query = col_f4.text_input("Global Search (Supplier name, ID, User, etc.)", "").strip().lower()
 
             # --- APPLY FILTER LOGIC ---
             filtered_df = history_df.copy()
@@ -291,6 +298,7 @@ def render_transactions(conn, cursor, truck_dict, truck_list):
                 filtered_df = filtered_df[
                     (filtered_df['supplier_name'].str.lower().str.contains(search_query, na=False)) |
                     (filtered_df['truck'].str.lower().str.contains(search_query, na=False)) |
+                    (filtered_df['created_by'].str.lower().str.contains(search_query, na=False)) |
                     (filtered_df['id'].astype(str).str.contains(search_query))
                 ]
 
@@ -298,17 +306,18 @@ def render_transactions(conn, cursor, truck_dict, truck_list):
             st.markdown(f"Showing **{len(filtered_df)}** matching transaction actions:")
 
             # Render Table Headers
-            col_h1, col_h2, col_h3, col_h4, col_h5 = st.columns([2, 3, 2, 3, 2])
+            col_h1, col_h2, col_h3, col_h4, col_h5, col_h6 = st.columns([2, 3, 2, 3, 2, 2])
             col_h1.markdown("**Date**")
             col_h2.markdown("**Truck Reference**")
             col_h3.markdown("**Quantity**")
             col_h4.markdown("**Transaction Context**")
-            col_h5.markdown("**Record ID**")
+            col_h5.markdown("**Recorded By**")
+            col_h6.markdown("**Record ID**")
             st.markdown("---")
 
             # Render Filtered Rows
             for _, item in filtered_df.iterrows():
-                col1, col2, col3, col4, col5 = st.columns([2, 3, 2, 3, 2])
+                col1, col2, col3, col4, col5, col6 = st.columns([2, 3, 2, 3, 2, 2])
                 col1.write(item["date"])
                 col2.write(f"🚛 {item['truck']}")
                 col3.write(f"**{item['liters']:,.2f} L**")
@@ -320,7 +329,8 @@ def render_transactions(conn, cursor, truck_dict, truck_list):
                     ctx = f"📥 Uplift [Supplier: {item['supplier_name']}]" if item['type'] == 'IN' else "📤 Regular Delivery"
                 
                 col4.write(ctx)
-                col5.write(f"`TX-{item['id']}`")
+                col5.write(f"👤 {item['created_by']}")
+                col6.write(f"`TX-{item['id']}`")
 
     # ==========================================
     # TAB 5: SYSTEM AUDIT LOG VIEWER
