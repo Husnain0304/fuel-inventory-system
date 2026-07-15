@@ -38,11 +38,19 @@ menu_options = [
     "⚙️ Settings"
 ]
 
-# FIX: Check for uppercase "ADMIN" to match your auth.py role
+# Check for uppercase "ADMIN" to match your auth.py role
 if st.session_state.get("role") == "ADMIN":
     menu_options.append("👥 Manage Users")
 
 page = st.sidebar.radio("Navigation", menu_options)
+
+# ---> ADD LOG OUT BUTTON TO THE SIDEBAR
+st.sidebar.markdown("---")
+if st.sidebar.button("🚪 Log Out", use_container_width=True):
+    # Clear the session state to log the user out
+    for key in list(st.session_state.keys()):
+        del st.session_state[key]
+    st.rerun()
 
 # Use standard database cursor to query the trucks list
 cursor = conn.cursor()
