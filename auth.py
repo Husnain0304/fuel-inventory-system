@@ -8,17 +8,16 @@ def hash_password(password):
 
 
 def ensure_default_admin(conn):
-    # Retrieve the raw SQLAlchemy engine to execute safely
-    engine = conn.engine
-    with engine.begin() as connection:
+    # Streamlit SQLConnection supports 'with conn.session as session:' directly
+    with conn.session as session:
         # PostgreSQL uses named parameters with ':' instead of '?'
-        result = connection.execute(
+        result = session.execute(
             text("SELECT * FROM users WHERE username = :username"),
             {"username": "admin"}
         ).fetchone()
         
         if not result:
-            connection.execute(
+            session.execute(
                 text("INSERT INTO users (username, password, role) VALUES (:username, :password, :role)"),
                 {
                     "username": "admin",
@@ -26,6 +25,7 @@ def ensure_default_admin(conn):
                     "role": "ADMIN"
                 }
             )
+            session.commit()
 
 
 def login_system(conn):
@@ -37,9 +37,8 @@ def login_system(conn):
         submitted = st.form_submit_button("Login")
 
         if submitted:
-            engine = conn.engine
-            with engine.connect() as connection:
-                result = connection.execute(
+            with conn.session as session:
+                result = session.execute(
                     text("SELECT password, role FROM users WHERE username = :username"),
                     {"username": username}
                 ).fetchone()
