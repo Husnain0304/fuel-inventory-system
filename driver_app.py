@@ -55,6 +55,15 @@ if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
     st.session_state.driver_name = ""
 
+# --- REFRESH PERSISTENCE (Query Parameters) ---
+# Check if a user is already logged in via URL parameter on page load/refresh
+query_params = st.query_params
+if "user" in query_params and not st.session_state.logged_in:
+    saved_user = query_params["user"]
+    if saved_user in DRIVERS:
+        st.session_state.logged_in = True
+        st.session_state.driver_name = DRIVERS[saved_user]["name"]
+
 # Initialize synced conversion states
 if "liters_val" not in st.session_state:
     st.session_state.liters_val = 0.0
@@ -80,6 +89,8 @@ if not st.session_state.logged_in:
         if username in DRIVERS and DRIVERS[username]["password"] == password:
             st.session_state.logged_in = True
             st.session_state.driver_name = DRIVERS[username]["name"]
+            # Save username to URL parameters to survive page refresh
+            st.query_params["user"] = username
             st.rerun()
         else:
             st.error("❌ Incorrect username or password. Please try again.")
@@ -88,15 +99,6 @@ if not st.session_state.logged_in:
 # --- MOBILE APP MAIN SCREEN (LOGGED IN) ---
 st.markdown(f"<h2 style='text-align: center; color: #008080;'>🚛 Driver Fuel Entry</h2>", unsafe_allow_html=True)
 st.markdown(f"<p style='text-align: center; font-size: 16px; color: #333;'>Welcome back, <b>{st.session_state.driver_name}</b>!</p>", unsafe_allow_html=True)
-
-if st.button("🚪 Log Out", use_container_width=True):
-    st.session_state.logged_in = False
-    st.session_state.driver_name = ""
-    # Reset values on logout
-    st.session_state.liters_val = 0.0
-    st.session_state.gallons_val = 0.0
-    st.rerun()
-
 st.markdown("<hr>", unsafe_allow_html=True)
 
 try:
@@ -115,7 +117,7 @@ try:
         
         st.markdown("### ⛽ Enter Quantity")
         
-        # Dual-column layout for side-by-side or stacked inputs on mobile
+        # Dual-column layout
         col1, col2 = st.columns(2)
         
         with col1:
@@ -139,7 +141,6 @@ try:
         st.markdown("<br>", unsafe_allow_html=True)
         
         if st.button("🚀 SUBMIT FUEL ENTRY", type="primary", use_container_width=True):
-            # We save liters to the database (since your DB system tracks in liters)
             if liters <= 0:
                 st.error("⚠️ Please enter a valid fuel quantity!")
             else:
@@ -157,3 +158,14 @@ try:
     
 except Exception as e:
     st.error(f"Could not connect to database: {e}")
+
+# --- LOGOUT BUTTON AT THE VERY BOTTOM ---
+st.markdown("<br><br><br><hr>", unsafe_allow_html=True)
+if st.button("🚪 Log Out", use_container_width=True, key="bottom_logout"):
+    st.session_state.logged_in = False
+    st.session_state.driver_name = ""
+    st.session_state.liters_val = 0.0
+    st.session_state.gallons_val = 0.0
+    # Clear the URL parameters on logout
+    st.query_params.clear()
+    st.rerun()
