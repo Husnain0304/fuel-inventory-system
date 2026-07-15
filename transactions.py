@@ -3,14 +3,14 @@ import pandas as pd
 from datetime import datetime
 
 # ==========================================
-# AUTOMATIC SETUP (No need to touch database.py)
+# AUTOMATIC SETUP (PostgreSQL-compatible)
 # ==========================================
 def auto_setup_db(cursor, conn):
-    # This automatically ensures the audit_log table exists without you doing anything
+    # 'SERIAL PRIMARY KEY' automatically handles auto-incrementing in PostgreSQL
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS audit_log (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        user TEXT,
+        id SERIAL PRIMARY KEY,
+        "user" TEXT,
         action TEXT,
         timestamp TEXT
     )
@@ -19,22 +19,22 @@ def auto_setup_db(cursor, conn):
 
 # Helper to write to audit log automatically
 def log_action(cursor, conn, action_text):
-    # If your auth.py hasn't set the session state yet, we default safely
     current_user = st.session_state.get("user", "System Admin")
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     cursor.execute(
-        "INSERT INTO audit_log (user, action, timestamp) VALUES (?, ?, ?)",
+        'INSERT INTO audit_log ("user", action, timestamp) VALUES (%s, %s, %s)',
         (current_user, action_text, timestamp)
     )
     conn.commit()
 
 def get_balance(conn, truck_id):
+    # PostgreSQL uses %s as the parameter placeholder
     df = pd.read_sql_query("""
         SELECT 
             SUM(CASE WHEN type='IN' THEN liters ELSE 0 END) -
             SUM(CASE WHEN type='OUT' THEN liters ELSE 0 END)
         FROM transactions
-        WHERE truck_id = ?
+        WHERE truck_id = %s
     """, conn, params=[truck_id])
     return df.iloc[0, 0] or 0
 
@@ -77,7 +77,7 @@ def render_transactions(conn, cursor, truck_dict, truck_list):
         if mode == "UPLIFT (Fuel IN)":
             if st.button("Save Uplift Entry", type="primary"):
                 cursor.execute(
-                    "INSERT INTO transactions (truck_id,date,liters,type) VALUES (?,?,?,'IN')",
+                    "INSERT INTO transactions (truck_id,date,liters,type) VALUES (%s,%s,%s,'IN')",
                     (truck_id, str(date), liters)
                 )
                 log_action(cursor, conn, f"Added Uplift of {liters:,.2f} L for Truck '{truck}' on date {date}")
@@ -90,7 +90,7 @@ def render_transactions(conn, cursor, truck_dict, truck_list):
                     st.error("❌ Insufficient balance in this truck!")
                 else:
                     cursor.execute(
-                        "INSERT INTO transactions (truck_id,date,liters,type) VALUES (?,?,?,'OUT')",
+                        "INSERT INTO transactions (truck_id,date,liters,type) VALUES (%s,%s,%s,'OUT')",
                         (truck_id, str(date), liters)
                     )
                     log_action(cursor, conn, f"Added Delivery of {liters:,.2f} L for Truck '{truck}' on date {date}")
@@ -101,11 +101,12 @@ def render_transactions(conn, cursor, truck_dict, truck_list):
     # TAB 2: HISTORY (CHECKBOXES & GROUP VIEWS)
     # =============================
     with tab2:
+        # Replaced SQLite "||" with PostgreSQL "CONCAT" syntax
         history_df = pd.read_sql_query("""
             SELECT transactions.id AS id,
                    transactions.date,
                    transactions.truck_id,
-                   trucks.emirate || ' ' || trucks.plate_code || ' ' || trucks.plate_number AS truck,
+                   CONCAT(trucks.emirate, ' ', trucks.plate_code, ' ', trucks.plate_number) AS truck,
                    transactions.liters,
                    transactions.type
             FROM transactions
@@ -156,12 +157,13 @@ def render_transactions(conn, cursor, truck_dict, truck_list):
                 if st.button("🗑️ Delete Selected Rows permanently", type="primary"):
                     if confirm_bulk:
                         id_list = list(st.session_state["selected_tx_ids"])
-                        placeholders = ",".join("?" for _ in id_list)
+                        # PostgreSQL parameter placeholder mapping
+                        placeholders = ",".join("%s" for _ in id_list)
                         
-                        # Grab details before deleting for the log
+                        # Grab details before deleting for the log (Using PostgreSQL CONCAT)
                         log_df = pd.read_sql_query(f"""
                             SELECT transactions.id, transactions.date, transactions.liters, transactions.type,
-                                   trucks.emirate || ' ' || trucks.plate_code || ' ' || trucks.plate_number AS truck
+                                   CONCAT(trucks.emirate, ' ', trucks.plate_code, ' ', trucks.plate_number) AS truck
                             FROM transactions
                             JOIN trucks ON transactions.truck_id = trucks.id
                             WHERE transactions.id IN ({placeholders})
@@ -271,8 +273,14 @@ def render_transactions(conn, cursor, truck_dict, truck_list):
         st.subheader("📋 Complete System Activity History")
         st.markdown("This tab automatically logs every action, telling you who performed a change, what change they made, and when it happened.")
         
-        # Load logs from DB
-        logs_df = pd.read_sql_query("SELECT timestamp AS [Date & Time], user AS [User], action AS [Action] FROM audit_log ORDER BY id DESC", conn)
+        # PostgreSQL-compatible SQL syntax for column headers with spaces
+        logs_df = pd.read_sql_query("""
+            SELECT timestamp AS "Date & Time", 
+                   "user" AS "User", 
+                   action AS "Action" 
+            FROM audit_log 
+            ORDER BY id DESC
+        """, conn)
         
         if logs_df.empty:
             st.info("No actions logged in the system database yet.")
@@ -291,7 +299,7 @@ def render_transactions(conn, cursor, truck_dict, truck_list):
     # ==========================================
     if "active_edit_id" in st.session_state:
         edit_id = st.session_state["active_edit_id"]
-        tx_data = pd.read_sql_query("SELECT * FROM transactions WHERE id=?", conn, params=[edit_id])
+        tx_data = pd.read_sql_query("SELECT * FROM transactions WHERE id=%s", conn, params=[edit_id])
 
         if not tx_data.empty:
             st.markdown("---")
@@ -315,7 +323,7 @@ def render_transactions(conn, cursor, truck_dict, truck_list):
                     st.error("Please check the confirmation box to authorize edit!")
                 else:
                     cursor.execute("""
-                        UPDATE transactions SET date=?, liters=?, type=? WHERE id=?
+                        UPDATE transactions SET date=%s, liters=%s, type=%s WHERE id=%s
                     """, (str(new_date), new_liters, new_type, edit_id))
                     
                     # Audit Log
