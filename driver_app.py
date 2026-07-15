@@ -50,7 +50,7 @@ def save_uplift(conn, truck_id, liters, supplier_id, driver_name):
 # --- DRIVER ACCOUNTS ---
 DRIVERS = st.secrets.get("drivers", {})
 
-# Initialize session state for login and dual-unit inputs
+# Initialize session state for login
 if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
     st.session_state.driver_name = ""
@@ -69,6 +69,12 @@ if "liters_val" not in st.session_state:
 if "gallons_val" not in st.session_state:
     st.session_state.gallons_val = 0.0
 
+# Initialize submission triggers
+if "save_trigger" not in st.session_state:
+    st.session_state.save_trigger = False
+    st.session_state.pending_liters = 0.0
+    st.session_state.pending_gallons = 0.0
+
 # Functions to sync inputs instantly
 def update_from_liters():
     st.session_state.gallons_val = round(st.session_state.liters_val / GAL_TO_LITERS, 3)
@@ -76,10 +82,22 @@ def update_from_liters():
 def update_from_gallons():
     st.session_state.liters_val = round(st.session_state.gallons_val * GAL_TO_LITERS, 3)
 
-# Helper function to reset input values safely before rendering
+# Reset helper
 def reset_inputs():
     st.session_state.liters_val = 0.0
     st.session_state.gallons_val = 0.0
+
+# Safe callback to process submit and reset inputs before screen re-renders
+def handle_submit_callback():
+    if st.session_state.liters_val <= 0:
+        st.session_state.submit_error = "⚠️ Please enter a valid fuel quantity!"
+    else:
+        st.session_state.save_trigger = True
+        st.session_state.pending_liters = st.session_state.liters_val
+        st.session_state.pending_gallons = st.session_state.gallons_val
+        st.session_state.submit_error = None
+        # Safely reset values
+        reset_inputs()
 
 # --- LOGIN SCREEN ---
 if not st.session_state.logged_in:
@@ -109,14 +127,26 @@ try:
     truck_dict = get_trucks(conn)
     supplier_dict = get_suppliers(conn)
     
+    # --- PROCESS PENDING DATABASE WRITE ---
+    if st.session_state.save_trigger:
+        with st.spinner("Saving to system..."):
+            save_uplift(
+                conn, 
+                truck_dict[st.session_state.m_truck], 
+                st.session_state.pending_liters, 
+                supplier_dict[st.session_state.m_supplier], 
+                st.session_state.driver_name
+            )
+        st.success(f"✅ Uplift of {st.session_state.pending_liters:,.2f} L ({st.session_state.pending_gallons:,.2f} Gal) Recorded Successfully!")
+        st.balloons()
+        # Clear triggers
+        st.session_state.save_trigger = False
+    
     if not truck_dict:
         st.warning("No trucks set up in system yet.")
     else:
         selected_truck = st.selectbox("Select Your Truck", list(truck_dict.keys()), key="m_truck")
-        truck_id = truck_dict[selected_truck]
-        
         selected_supplier = st.selectbox("Select Fuel Supplier", list(supplier_dict.keys()), key="m_supplier")
-        supplier_id = supplier_dict[selected_supplier]
         
         st.markdown("### ⛽ Enter Quantity")
         
@@ -143,20 +173,18 @@ try:
             
         st.markdown("<br>", unsafe_allow_html=True)
         
-        # Handle form submission
-        if st.button("🚀 SUBMIT FUEL ENTRY", type="primary", use_container_width=True):
-            if liters <= 0:
-                st.error("⚠️ Please enter a valid fuel quantity!")
-            else:
-                with st.spinner("Saving to system..."):
-                    save_uplift(conn, truck_id, liters, supplier_id, st.session_state.driver_name)
-                
-                st.success(f"✅ Uplift of {liters:,.2f} L ({gallons:,.2f} Gal) Recorded Successfully!")
-                st.balloons()
-                
-                # Reset inputs by calling our helper function first, then reloading safely
-                reset_inputs()
-                st.rerun()
+        # Display validation error if we tried to submit 0
+        if "submit_error" in st.session_state and st.session_state.submit_error:
+            st.error(st.session_state.submit_error)
+            st.session_state.submit_error = None
+        
+        # Use on_click callback to safely trigger save and reset
+        st.button(
+            "🚀 SUBMIT FUEL ENTRY", 
+            type="primary", 
+            use_container_width=True, 
+            on_click=handle_submit_callback
+        )
                 
     conn.close()
     
