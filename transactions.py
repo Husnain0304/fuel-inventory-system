@@ -21,19 +21,13 @@ def auto_setup_db(cursor, conn):
     )
     """)
     
-    # 3. Ensure a default supplier exists so the application doesn't break
+    # 3. Ensure a default supplier exists
     cursor.execute("INSERT INTO suppliers (name) VALUES ('Default Supplier') ON CONFLICT (name) DO NOTHING")
     
-    # 4. Safely add missing columns to the transactions table if they don't exist
-    cursor.execute("""
-    ALTER TABLE transactions ADD COLUMN IF NOT EXISTS supplier_id INTEGER REFERENCES suppliers(id);
-    """)
-    cursor.execute("""
-    ALTER TABLE transactions ADD COLUMN IF NOT EXISTS transfer_partner_id INTEGER;
-    """)
-    cursor.execute("""
-    ALTER TABLE transactions ADD COLUMN IF NOT EXISTS created_by TEXT;
-    """)
+    # 4. Safely add missing columns
+    cursor.execute("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS supplier_id INTEGER REFERENCES suppliers(id);")
+    cursor.execute("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS transfer_partner_id INTEGER;")
+    cursor.execute("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS created_by TEXT;")
     
     conn.commit()
 
@@ -56,8 +50,40 @@ def get_balance(conn, truck_id):
     """, conn, params=[truck_id])
     return df.iloc[0, 0] or 0
 
+@st.dialog("✏️ Edit Transaction")
+def edit_transaction_dialog(conn, cursor, tx_item, supplier_dict):
+    st.write(f"Editing Transaction **TX-{tx_item['id']}** for Truck **{tx_item['truck']}**")
+    
+    new_date = st.date_input("Date", value=pd.to_datetime(tx_item['date']).date())
+    new_liters = st.number_input("Liters", min_value=0.1, value=float(tx_item['liters']))
+    
+    supplier_list = list(supplier_dict.keys())
+    current_supplier = tx_item['supplier_name'] if tx_item['supplier_name'] in supplier_list else (supplier_list[0] if supplier_list else None)
+    
+    if tx_item['type'] == 'IN' and not tx_item['transfer_partner_id']:
+        new_supplier = st.selectbox("Supplier", supplier_list, index=supplier_list.index(current_supplier) if current_supplier in supplier_list else 0)
+        new_supplier_id = supplier_dict.get(new_supplier)
+    else:
+        new_supplier_id = tx_item.get('supplier_id')
+
+    if st.button("Save Changes", type="primary"):
+        cursor.execute("""
+            UPDATE transactions 
+            SET date = %s, liters = %s, supplier_id = %s
+            WHERE id = %s
+        """, (str(new_date), new_liters, new_supplier_id, tx_item['id']))
+        
+        # If part of a transfer pair, update partner liters too
+        if tx_item['transfer_partner_id']:
+            cursor.execute("UPDATE transactions SET liters = %s, date = %s WHERE id = %s", 
+                           (new_liters, str(new_date), tx_item['transfer_partner_id']))
+
+        conn.commit()
+        log_action(cursor, conn, f"EDITED TX-{tx_item['id']}: Updated Liters to {new_liters:,.2f} L and Date to {new_date}")
+        st.success("Transaction updated!")
+        st.rerun()
+
 def render_transactions(conn, cursor, truck_dict, truck_list):
-    # Setup tables and columns first to prevent Pandas query errors
     auto_setup_db(cursor, conn)
 
     if "role" not in st.session_state:
@@ -71,12 +97,10 @@ def render_transactions(conn, cursor, truck_dict, truck_list):
         st.warning("Add a truck first.")
         return
 
-    # Fetch current suppliers from DB
     suppliers_df = pd.read_sql_query("SELECT id, name FROM suppliers ORDER BY name", conn)
     supplier_dict = {row['name']: row['id'] for _, row in suppliers_df.iterrows()}
     supplier_list = list(supplier_dict.keys())
 
-    # App Tabs
     tab1, tab2, tab3, tab4, tab5 = st.tabs([
         "➕ Add Entry", 
         "🚛 Truck Transfer", 
@@ -85,11 +109,10 @@ def render_transactions(conn, cursor, truck_dict, truck_list):
         "📋 View Audit Logs"
     ])
 
-    # Get active user info
     active_user = st.session_state.get("user", "Admin_User")
 
     # ==========================================
-    # TAB 1: ADD ENTRY (UPLIFT / DELIVERY)
+    # TAB 1: ADD ENTRY
     # ==========================================
     with tab1:
         mode = st.radio("Select Action Type", ["UPLIFT (Fuel IN)", "DELIVERY (Fuel OUT)"], horizontal=True)
@@ -136,15 +159,13 @@ def render_transactions(conn, cursor, truck_dict, truck_list):
                     st.rerun()
 
     # ==========================================
-    # TAB 2: TRUCK TO TRUCK TRANSFER
+    # TAB 2: TRUCK TRANSFER
     # ==========================================
     with tab2:
         st.subheader("Direct Fuel Transfer")
         col_t1, col_t2 = st.columns(2)
         
         source_truck = col_t1.selectbox("From Truck (Source)", truck_list, key="transfer_source")
-        
-        # Filter out the source truck so a truck can't transfer to itself
         available_dest_trucks = [t for t in truck_list if t != source_truck]
         
         if not available_dest_trucks:
@@ -153,7 +174,6 @@ def render_transactions(conn, cursor, truck_dict, truck_list):
         else:
             dest_truck = col_t2.selectbox("To Truck (Destination)", available_dest_trucks, key="transfer_dest")
 
-        # Safely acquire IDs only if we have a valid destination choice
         source_id = truck_dict[source_truck]
         source_balance = get_balance(conn, source_id)
         col_t1.info(f"Source Balance: {source_balance:,.2f} L")
@@ -220,12 +240,11 @@ def render_transactions(conn, cursor, truck_dict, truck_list):
                         st.error("This supplier is already registered.")
 
     # ==========================================
-    # TAB 4: VIEW & FILTER HISTORY (POWER FILTERED)
+    # TAB 4: VIEW & FILTER HISTORY (SUMMARY & EDITS)
     # ==========================================
     with tab4:
         st.subheader("🧐 Historical Audit & Filter Engine")
 
-        # Fetch entire history join with created_by field included
         history_df = pd.read_sql_query("""
             SELECT transactions.id AS id,
                    transactions.date,
@@ -234,6 +253,7 @@ def render_transactions(conn, cursor, truck_dict, truck_list):
                    transactions.liters,
                    transactions.type,
                    suppliers.name AS supplier_name,
+                   transactions.supplier_id,
                    transactions.transfer_partner_id,
                    COALESCE(transactions.created_by, 'System') AS created_by
             FROM transactions
@@ -247,45 +267,42 @@ def render_transactions(conn, cursor, truck_dict, truck_list):
         else:
             history_df['date_parsed'] = pd.to_datetime(history_df['date'])
 
-            # --- ADVANCED FILTER INTERFACE ---
+            # View Toggle Switch
+            view_mode = st.radio(
+                "Select View Mode", 
+                ["📊 Summarized Fleet Totals", "📜 Detailed Transaction Records"], 
+                horizontal=True
+            )
+
+            # Advanced Filters
             with st.container(border=True):
                 st.markdown("⚡ **Filter Controls**")
                 col_f1, col_f2 = st.columns(2)
                 
-                # 1. Date Filter
                 min_date = history_df['date_parsed'].min().date()
                 max_date = history_df['date_parsed'].max().date()
                 selected_dates = col_f1.date_input("Filter by Date Range", value=(min_date, max_date))
-                
-                # 2. Truck Filter
                 selected_trucks = col_f2.multiselect("Filter by Truck Number", options=list(history_df['truck'].unique()))
                 
                 col_f3, col_f4 = st.columns(2)
-                
-                # 3. Transaction Type Filter
                 type_filter = col_f3.selectbox(
                     "Filter by Transaction Name/Type", 
                     ["All Transactions", "Standard Uplift (IN)", "Standard Delivery (OUT)", "Internal Transfers Only"]
                 )
-                
-                # 4. Global Text Search
                 search_query = col_f4.text_input("Global Search (Supplier name, ID, User, etc.)", "").strip().lower()
 
-            # --- APPLY FILTER LOGIC ---
+            # Apply Filters
             filtered_df = history_df.copy()
 
-            # Date check
             if isinstance(selected_dates, tuple) and len(selected_dates) == 2:
                 filtered_df = filtered_df[
                     (filtered_df['date_parsed'].dt.date >= selected_dates[0]) & 
                     (filtered_df['date_parsed'].dt.date <= selected_dates[1])
                 ]
             
-            # Truck check
             if selected_trucks:
                 filtered_df = filtered_df[filtered_df['truck'].isin(selected_trucks)]
             
-            # Type check
             if type_filter == "Standard Uplift (IN)":
                 filtered_df = filtered_df[(filtered_df['type'] == 'IN') & (filtered_df['transfer_partner_id'].isna())]
             elif type_filter == "Standard Delivery (OUT)":
@@ -293,7 +310,6 @@ def render_transactions(conn, cursor, truck_dict, truck_list):
             elif type_filter == "Internal Transfers Only":
                 filtered_df = filtered_df[filtered_df['transfer_partner_id'].notna()]
 
-            # Text string query matching
             if search_query:
                 filtered_df = filtered_df[
                     (filtered_df['supplier_name'].str.lower().str.contains(search_query, na=False)) |
@@ -302,35 +318,73 @@ def render_transactions(conn, cursor, truck_dict, truck_list):
                     (filtered_df['id'].astype(str).str.contains(search_query))
                 ]
 
-            # Display Data Metric metrics
-            st.markdown(f"Showing **{len(filtered_df)}** matching transaction actions:")
-
-            # Render Table Headers
-            col_h1, col_h2, col_h3, col_h4, col_h5, col_h6 = st.columns([2, 3, 2, 3, 2, 2])
-            col_h1.markdown("**Date**")
-            col_h2.markdown("**Truck Reference**")
-            col_h3.markdown("**Quantity**")
-            col_h4.markdown("**Transaction Context**")
-            col_h5.markdown("**Recorded By**")
-            col_h6.markdown("**Record ID**")
-            st.markdown("---")
-
-            # Render Filtered Rows
-            for _, item in filtered_df.iterrows():
-                col1, col2, col3, col4, col5, col6 = st.columns([2, 3, 2, 3, 2, 2])
-                col1.write(item["date"])
-                col2.write(f"🚛 {item['truck']}")
-                col3.write(f"**{item['liters']:,.2f} L**")
+            # MODE A: SUMMARIZED ENTRY PER TRUCK
+            if view_mode == "📊 Summarized Fleet Totals":
+                st.markdown("### 🚛 Total Fuel Summary by Truck")
                 
-                # Context badge rendering
-                if item['transfer_partner_id']:
-                    ctx = f"🔄 Transfer ({'Into Truck' if item['type']=='IN' else 'Out of Truck'})"
-                else:
-                    ctx = f"📥 Uplift [Supplier: {item['supplier_name']}]" if item['type'] == 'IN' else "📤 Regular Delivery"
-                
-                col4.write(ctx)
-                col5.write(f"👤 {item['created_by']}")
-                col6.write(f"`TX-{item['id']}`")
+                summary_df = filtered_df.groupby('truck').apply(
+                    lambda g: pd.Series({
+                        'Total Uplift / IN (L)': g[g['type'] == 'IN']['liters'].sum(),
+                        'Total Delivery / OUT (L)': g[g['type'] == 'OUT']['liters'].sum(),
+                        'Net Balance (L)': g[g['type'] == 'IN']['liters'].sum() - g[g['type'] == 'OUT']['liters'].sum(),
+                        'Total Transactions': len(g)
+                    })
+                ).reset_index()
+
+                st.dataframe(
+                    summary_df.style.format({
+                        'Total Uplift / IN (L)': '{:,.2f}',
+                        'Total Delivery / OUT (L)': '{:,.2f}',
+                        'Net Balance (L)': '{:,.2f}',
+                        'Total Transactions': '{:,.0f}'
+                    }),
+                    use_container_width=True,
+                    hide_index=True
+                )
+
+            # MODE B: DETAILED RECORD LIST WITH EDIT & DELETE
+            else:
+                st.markdown(f"Showing **{len(filtered_df)}** matching transaction actions:")
+
+                col_h1, col_h2, col_h3, col_h4, col_h5, col_h6, col_h7 = st.columns([2, 3, 2, 3, 2, 2, 2])
+                col_h1.markdown("**Date**")
+                col_h2.markdown("**Truck**")
+                col_h3.markdown("**Quantity**")
+                col_h4.markdown("**Context**")
+                col_h5.markdown("**By**")
+                col_h6.markdown("**ID**")
+                col_h7.markdown("**Actions**")
+                st.markdown("---")
+
+                for _, item in filtered_df.iterrows():
+                    col1, col2, col3, col4, col5, col6, col7 = st.columns([2, 3, 2, 3, 2, 2, 2])
+                    col1.write(item["date"])
+                    col2.write(f"🚛 {item['truck']}")
+                    col3.write(f"**{item['liters']:,.2f} L**")
+                    
+                    if item['transfer_partner_id']:
+                        ctx = f"🔄 Transfer ({'IN' if item['type']=='IN' else 'OUT'})"
+                    else:
+                        ctx = f"📥 Uplift [{item['supplier_name']}]" if item['type'] == 'IN' else "📤 Delivery"
+                    
+                    col4.write(ctx)
+                    col5.write(f"👤 {item['created_by']}")
+                    col6.write(f"`TX-{item['id']}`")
+                    
+                    # Edit & Delete Buttons
+                    edit_col, del_col = col7.columns(2)
+                    
+                    if edit_col.button("✏️", key=f"edit_{item['id']}"):
+                        edit_transaction_dialog(conn, cursor, item, supplier_dict)
+
+                    if del_col.button("🗑️", key=f"del_{item['id']}"):
+                        cursor.execute("DELETE FROM transactions WHERE id = %s", (item['id'],))
+                        if item['transfer_partner_id']:
+                            cursor.execute("DELETE FROM transactions WHERE id = %s", (item['transfer_partner_id'],))
+                        conn.commit()
+                        log_action(cursor, conn, f"DELETED Transaction TX-{item['id']} ({item['liters']:,.2f} L for Truck '{item['truck']}')")
+                        st.toast(f"Deleted TX-{item['id']} successfully!")
+                        st.rerun()
 
     # ==========================================
     # TAB 5: SYSTEM AUDIT LOG VIEWER
