@@ -73,7 +73,7 @@ def edit_transaction_dialog(conn, cursor, tx_item, supplier_dict):
             WHERE id = %s
         """, (str(new_date), new_liters, new_supplier_id, tx_item['id']))
         
-        # If part of a transfer pair, update partner liters too
+        # Update partner transaction if part of a transfer
         if tx_item['transfer_partner_id']:
             cursor.execute("UPDATE transactions SET liters = %s, date = %s WHERE id = %s", 
                            (new_liters, str(new_date), tx_item['transfer_partner_id']))
@@ -81,6 +81,45 @@ def edit_transaction_dialog(conn, cursor, tx_item, supplier_dict):
         conn.commit()
         log_action(cursor, conn, f"EDITED TX-{tx_item['id']}: Updated Liters to {new_liters:,.2f} L and Date to {new_date}")
         st.success("Transaction updated!")
+        st.rerun()
+
+@st.dialog("⚠️ Confirm Bulk Delete")
+def confirm_bulk_delete_dialog(conn, cursor, truck_id, truck_name, start_date, end_date, supplier_id=None):
+    st.warning(f"Are you sure you want to delete transactions for **{truck_name}** between **{start_date}** and **{end_date}**?")
+    
+    if supplier_id:
+        cursor.execute("""
+            SELECT COUNT(*) FROM transactions 
+            WHERE truck_id = %s AND date >= %s AND date <= %s AND supplier_id = %s
+        """, (truck_id, str(start_date), str(end_date), supplier_id))
+    else:
+        cursor.execute("""
+            SELECT COUNT(*) FROM transactions 
+            WHERE truck_id = %s AND date >= %s AND date <= %s
+        """, (truck_id, str(start_date), str(end_date)))
+    
+    count = cursor.fetchone()[0]
+    st.write(f"📊 **Total records to be deleted:** `{count}`")
+
+    if count == 0:
+        st.info("No matching records found for this selection.")
+        return
+
+    if st.button("🔴 YES, DELETE THESE RECORDS", type="primary", use_container_width=True):
+        if supplier_id:
+            cursor.execute("""
+                DELETE FROM transactions 
+                WHERE truck_id = %s AND date >= %s AND date <= %s AND supplier_id = %s
+            """, (truck_id, str(start_date), str(end_date), supplier_id))
+        else:
+            cursor.execute("""
+                DELETE FROM transactions 
+                WHERE truck_id = %s AND date >= %s AND date <= %s
+            """, (truck_id, str(start_date), str(end_date)))
+        
+        conn.commit()
+        log_action(cursor, conn, f"BULK DELETED {count} transactions for Truck '{truck_name}' between {start_date} and {end_date}")
+        st.success(f"Successfully deleted {count} records! You can now re-upload your corrected file.")
         st.rerun()
 
 def render_transactions(conn, cursor, truck_dict, truck_list):
@@ -112,7 +151,7 @@ def render_transactions(conn, cursor, truck_dict, truck_list):
     active_user = st.session_state.get("user", "Admin_User")
 
     # ==========================================
-    # TAB 1: ADD ENTRY
+    # TAB 1: ADD ENTRY (UPLIFT / DELIVERY)
     # ==========================================
     with tab1:
         mode = st.radio("Select Action Type", ["UPLIFT (Fuel IN)", "DELIVERY (Fuel OUT)"], horizontal=True)
@@ -159,7 +198,7 @@ def render_transactions(conn, cursor, truck_dict, truck_list):
                     st.rerun()
 
     # ==========================================
-    # TAB 2: TRUCK TRANSFER
+    # TAB 2: TRUCK TO TRUCK TRANSFER
     # ==========================================
     with tab2:
         st.subheader("Direct Fuel Transfer")
@@ -240,7 +279,7 @@ def render_transactions(conn, cursor, truck_dict, truck_list):
                         st.error("This supplier is already registered.")
 
     # ==========================================
-    # TAB 4: VIEW & FILTER HISTORY (SUMMARY & EDITS)
+    # TAB 4: VIEW, SUMMARY, EDIT & BULK DELETE
     # ==========================================
     with tab4:
         st.subheader("🧐 Historical Audit & Filter Engine")
@@ -267,62 +306,17 @@ def render_transactions(conn, cursor, truck_dict, truck_list):
         else:
             history_df['date_parsed'] = pd.to_datetime(history_df['date'])
 
-            # View Toggle Switch
             view_mode = st.radio(
                 "Select View Mode", 
-                ["📊 Summarized Fleet Totals", "📜 Detailed Transaction Records"], 
+                ["📊 Summarized Fleet Totals", "📜 Detailed Transaction Records", "🚨 Bulk Delete Operations"], 
                 horizontal=True
             )
 
-            # Advanced Filters
-            with st.container(border=True):
-                st.markdown("⚡ **Filter Controls**")
-                col_f1, col_f2 = st.columns(2)
-                
-                min_date = history_df['date_parsed'].min().date()
-                max_date = history_df['date_parsed'].max().date()
-                selected_dates = col_f1.date_input("Filter by Date Range", value=(min_date, max_date))
-                selected_trucks = col_f2.multiselect("Filter by Truck Number", options=list(history_df['truck'].unique()))
-                
-                col_f3, col_f4 = st.columns(2)
-                type_filter = col_f3.selectbox(
-                    "Filter by Transaction Name/Type", 
-                    ["All Transactions", "Standard Uplift (IN)", "Standard Delivery (OUT)", "Internal Transfers Only"]
-                )
-                search_query = col_f4.text_input("Global Search (Supplier name, ID, User, etc.)", "").strip().lower()
-
-            # Apply Filters
-            filtered_df = history_df.copy()
-
-            if isinstance(selected_dates, tuple) and len(selected_dates) == 2:
-                filtered_df = filtered_df[
-                    (filtered_df['date_parsed'].dt.date >= selected_dates[0]) & 
-                    (filtered_df['date_parsed'].dt.date <= selected_dates[1])
-                ]
-            
-            if selected_trucks:
-                filtered_df = filtered_df[filtered_df['truck'].isin(selected_trucks)]
-            
-            if type_filter == "Standard Uplift (IN)":
-                filtered_df = filtered_df[(filtered_df['type'] == 'IN') & (filtered_df['transfer_partner_id'].isna())]
-            elif type_filter == "Standard Delivery (OUT)":
-                filtered_df = filtered_df[(filtered_df['type'] == 'OUT') & (filtered_df['transfer_partner_id'].isna())]
-            elif type_filter == "Internal Transfers Only":
-                filtered_df = filtered_df[filtered_df['transfer_partner_id'].notna()]
-
-            if search_query:
-                filtered_df = filtered_df[
-                    (filtered_df['supplier_name'].str.lower().str.contains(search_query, na=False)) |
-                    (filtered_df['truck'].str.lower().str.contains(search_query, na=False)) |
-                    (filtered_df['created_by'].str.lower().str.contains(search_query, na=False)) |
-                    (filtered_df['id'].astype(str).str.contains(search_query))
-                ]
-
-            # MODE A: SUMMARIZED ENTRY PER TRUCK
+            # 1. SUMMARIZED TOTALS BY TRUCK
             if view_mode == "📊 Summarized Fleet Totals":
                 st.markdown("### 🚛 Total Fuel Summary by Truck")
                 
-                summary_df = filtered_df.groupby('truck').apply(
+                summary_df = history_df.groupby('truck').apply(
                     lambda g: pd.Series({
                         'Total Uplift / IN (L)': g[g['type'] == 'IN']['liters'].sum(),
                         'Total Delivery / OUT (L)': g[g['type'] == 'OUT']['liters'].sum(),
@@ -342,8 +336,79 @@ def render_transactions(conn, cursor, truck_dict, truck_list):
                     hide_index=True
                 )
 
-            # MODE B: DETAILED RECORD LIST WITH EDIT & DELETE
+            # 2. BULK DELETE TOOL (DATE RANGE & TRUCK)
+            elif view_mode == "🚨 Bulk Delete Operations":
+                st.markdown("### 🗑️ Bulk Delete Uploaded Data")
+                st.warning("Use this panel to erase wrong batch uploads for a truck and date range before re-uploading your clean file.")
+
+                col_b1, col_b2 = st.columns(2)
+                target_truck = col_b1.selectbox("Select Target Truck", truck_list, key="bulk_del_truck")
+                target_truck_id = truck_dict[target_truck]
+
+                min_d = history_df['date_parsed'].min().date()
+                max_d = history_df['date_parsed'].max().date()
+                
+                date_range = col_b2.date_input("Select Date Range to Clear", value=(min_d, max_d), key="bulk_del_dates")
+
+                suppliers_for_bulk = ["All Suppliers"] + supplier_list
+                selected_bulk_supplier = col_b1.selectbox("Filter by Supplier (Optional)", suppliers_for_bulk, key="bulk_del_supplier")
+                target_supplier_id = supplier_dict.get(selected_bulk_supplier) if selected_bulk_supplier != "All Suppliers" else None
+
+                if st.button("💥 PROCEED TO BULK DELETE", type="primary"):
+                    if isinstance(date_range, tuple) and len(date_range) == 2:
+                        confirm_bulk_delete_dialog(
+                            conn, cursor, 
+                            target_truck_id, target_truck, 
+                            date_range[0], date_range[1], 
+                            target_supplier_id
+                        )
+                    else:
+                        st.error("Please select both a start date and end date.")
+
+            # 3. DETAILED LIST WITH EDIT & SINGLE DELETE
             else:
+                with st.container(border=True):
+                    st.markdown("⚡ **Filter Controls**")
+                    col_f1, col_f2 = st.columns(2)
+                    
+                    min_date = history_df['date_parsed'].min().date()
+                    max_date = history_df['date_parsed'].max().date()
+                    selected_dates = col_f1.date_input("Filter by Date Range", value=(min_date, max_date))
+                    selected_trucks = col_f2.multiselect("Filter by Truck Number", options=list(history_df['truck'].unique()))
+                    
+                    col_f3, col_f4 = st.columns(2)
+                    type_filter = col_f3.selectbox(
+                        "Filter by Transaction Name/Type", 
+                        ["All Transactions", "Standard Uplift (IN)", "Standard Delivery (OUT)", "Internal Transfers Only"]
+                    )
+                    search_query = col_f4.text_input("Global Search (Supplier name, ID, User, etc.)", "").strip().lower()
+
+                filtered_df = history_df.copy()
+
+                if isinstance(selected_dates, tuple) and len(selected_dates) == 2:
+                    filtered_df = filtered_df[
+                        (filtered_df['date_parsed'].dt.date >= selected_dates[0]) & 
+                        (filtered_df['date_parsed'].dt.date <= selected_dates[1])
+                    ]
+                
+                if selected_trucks:
+                    filtered_df = filtered_df[filtered_df['truck'].isin(selected_trucks)]
+                
+                if type_filter == "Standard Uplift (IN)":
+                    filtered_df = filtered_df[(filtered_df['type'] == 'IN') & (filtered_df['transfer_partner_id'].isna())]
+                elif type_filter == "Standard Delivery (OUT)":
+                    filtered_df = filtered_df[(filtered_df['type'] == 'OUT') & (filtered_df['transfer_partner_id'].isna())]
+                elif type_filter == "Internal Transfers Only":
+                    filtered_df = filtered_df[filtered_df['transfer_partner_id'].notna()]
+
+                if search_query:
+                    filtered_df = filtered_df[
+                        (filtered_df['supplier_name'].str.lower().str.contains(search_query, na=False)) |
+                        (filtered_df['truck'].str.lower().str.contains(search_query, na=False)) |
+                        (filtered_df['created_by'].str.lower().str.contains(search_query, na=False)) |
+                        (filtered_df['id'].astype(str).str.contains(search_query))
+                    ]
+
                 st.markdown(f"Showing **{len(filtered_df)}** matching transaction actions:")
 
                 col_h1, col_h2, col_h3, col_h4, col_h5, col_h6, col_h7 = st.columns([2, 3, 2, 3, 2, 2, 2])
@@ -371,7 +436,6 @@ def render_transactions(conn, cursor, truck_dict, truck_list):
                     col5.write(f"👤 {item['created_by']}")
                     col6.write(f"`TX-{item['id']}`")
                     
-                    # Edit & Delete Buttons
                     edit_col, del_col = col7.columns(2)
                     
                     if edit_col.button("✏️", key=f"edit_{item['id']}"):
