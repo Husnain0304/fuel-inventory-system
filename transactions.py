@@ -123,6 +123,48 @@ def confirm_bulk_delete_dialog(conn, cursor, truck_id, truck_name, start_date, e
         st.success(f"Successfully deleted {count} records! You can now re-upload your corrected file.")
         st.rerun()
 
+# ==========================================
+# NEW ADMIN-ONLY CLEAR DATA DIALOGS
+# ==========================================
+@st.dialog("⚠️ CONFIRM CLEAR ALL IN (UPLIFT) DATA")
+def confirm_clear_in_dialog(conn, cursor):
+    cursor.execute("SELECT COUNT(*) FROM transactions WHERE type = 'IN'")
+    count = cursor.fetchone()[0]
+    
+    st.error(f"🚨 **WARNING:** You are about to permanently delete ALL **{count}** UPLIFT (Fuel IN) records from the database!")
+    st.write("This action cannot be undone.")
+
+    if count == 0:
+        st.info("No UPLIFT (IN) records found to delete.")
+        return
+
+    if st.button("🔴 YES, WIPE ALL IN / UPLIFT RECORDS", type="primary", use_container_width=True):
+        cursor.execute("DELETE FROM transactions WHERE type = 'IN'")
+        conn.commit()
+        log_action(cursor, conn, f"ADMIN WIPED ALL UPLIFT (IN) TRANSACTIONS ({count} records)")
+        st.success(f"Successfully deleted all {count} IN (Uplift) records!")
+        st.rerun()
+
+@st.dialog("⚠️ CONFIRM CLEAR ALL OUT (DELIVERY) DATA")
+def confirm_clear_out_dialog(conn, cursor):
+    cursor.execute("SELECT COUNT(*) FROM transactions WHERE type = 'OUT'")
+    count = cursor.fetchone()[0]
+    
+    st.error(f"🚨 **WARNING:** You are about to permanently delete ALL **{count}** DELIVERY (Fuel OUT) records from the database!")
+    st.write("This action cannot be undone.")
+
+    if count == 0:
+        st.info("No DELIVERY (OUT) records found to delete.")
+        return
+
+    if st.button("🔴 YES, WIPE ALL OUT / DELIVERY RECORDS", type="primary", use_container_width=True):
+        cursor.execute("DELETE FROM transactions WHERE type = 'OUT'")
+        conn.commit()
+        log_action(cursor, conn, f"ADMIN WIPED ALL DELIVERY (OUT) TRANSACTIONS ({count} records)")
+        st.success(f"Successfully deleted all {count} OUT (Delivery) records!")
+        st.rerun()
+
+
 def render_transactions(conn, cursor, truck_dict, truck_list):
     auto_setup_db(cursor, conn)
 
@@ -150,6 +192,7 @@ def render_transactions(conn, cursor, truck_dict, truck_list):
     ])
 
     active_user = st.session_state.get("user", "Admin_User")
+    user_role = st.session_state.get("role", "USER")
 
     # ==========================================
     # TAB 1: ADD ENTRY (UPLIFT / DELIVERY)
@@ -285,6 +328,18 @@ def render_transactions(conn, cursor, truck_dict, truck_list):
     with tab4:
         st.subheader("🧐 Historical Audit & Filter Engine")
 
+        # --- ADMIN WIPE DATA SECTION ---
+        if user_role == "ADMIN":
+            with st.expander("🔑 Admin Database Purge Controls", expanded=False):
+                st.warning("⚠️ **ADMIN ONLY ZONE:** Clearing transaction types will purge corresponding records across all trucks.")
+                col_clear_in, col_clear_out = st.columns(2)
+                
+                if col_clear_in.button("🔥 Clear ALL UPLIFT (IN) Data", use_container_width=True):
+                    confirm_clear_in_dialog(conn, cursor)
+                
+                if col_clear_out.button("🔥 Clear ALL DELIVERY (OUT) Data", use_container_width=True):
+                    confirm_clear_out_dialog(conn, cursor)
+
         history_df = pd.read_sql_query("""
             SELECT transactions.id AS id,
                    transactions.date,
@@ -410,12 +465,11 @@ def render_transactions(conn, cursor, truck_dict, truck_list):
                         (filtered_df['id'].astype(str).str.contains(search_query))
                     ]
 
-                # --- EXCEL DOWNLOAD BUTTON GENERATION ---
+                # EXCEL DOWNLOAD BUTTON GENERATION
                 col_info, col_download = st.columns([3, 1])
                 col_info.markdown(f"Showing **{len(filtered_df)}** matching transaction actions:")
 
                 if not filtered_df.empty:
-                    # Prepare export dataframe with clean column headers
                     export_df = filtered_df.copy()
                     export_df['Context'] = export_df.apply(
                         lambda r: f"Transfer ({'IN' if r['type']=='IN' else 'OUT'})" if pd.notna(r['transfer_partner_id']) 
@@ -432,7 +486,6 @@ def render_transactions(conn, cursor, truck_dict, truck_list):
                         'created_by': 'Created By'
                     })[['Transaction ID', 'Date', 'Truck', 'Type', 'Liters', 'Context', 'Supplier Name', 'Created By']]
 
-                    # Convert dataframe to Excel buffer
                     buffer = io.BytesIO()
                     with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
                         export_df.to_excel(writer, index=False, sheet_name='Detailed Transactions')
