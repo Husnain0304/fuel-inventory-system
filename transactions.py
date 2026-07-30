@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime
+import io  # Required for in-memory Excel file generation
 
 def auto_setup_db(cursor, conn):
     # 1. Ensure audit_log table exists
@@ -409,7 +410,40 @@ def render_transactions(conn, cursor, truck_dict, truck_list):
                         (filtered_df['id'].astype(str).str.contains(search_query))
                     ]
 
-                st.markdown(f"Showing **{len(filtered_df)}** matching transaction actions:")
+                # --- EXCEL DOWNLOAD BUTTON GENERATION ---
+                col_info, col_download = st.columns([3, 1])
+                col_info.markdown(f"Showing **{len(filtered_df)}** matching transaction actions:")
+
+                if not filtered_df.empty:
+                    # Prepare export dataframe with clean column headers
+                    export_df = filtered_df.copy()
+                    export_df['Context'] = export_df.apply(
+                        lambda r: f"Transfer ({'IN' if r['type']=='IN' else 'OUT'})" if pd.notna(r['transfer_partner_id']) 
+                        else (f"Uplift [{r['supplier_name']}]" if r['type'] == 'IN' else "Delivery"), axis=1
+                    )
+                    
+                    export_df = export_df.rename(columns={
+                        'id': 'Transaction ID',
+                        'date': 'Date',
+                        'truck': 'Truck',
+                        'liters': 'Liters',
+                        'type': 'Type',
+                        'supplier_name': 'Supplier Name',
+                        'created_by': 'Created By'
+                    })[['Transaction ID', 'Date', 'Truck', 'Type', 'Liters', 'Context', 'Supplier Name', 'Created By']]
+
+                    # Convert dataframe to Excel buffer
+                    buffer = io.BytesIO()
+                    with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+                        export_df.to_excel(writer, index=False, sheet_name='Detailed Transactions')
+                    
+                    col_download.download_button(
+                        label="📥 Download Excel",
+                        data=buffer.getvalue(),
+                        file_name=f"Transaction_Records_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        use_container_width=True
+                    )
 
                 col_h1, col_h2, col_h3, col_h4, col_h5, col_h6, col_h7 = st.columns([2, 3, 2, 3, 2, 2, 2])
                 col_h1.markdown("**Date**")
