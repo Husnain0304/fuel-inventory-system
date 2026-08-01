@@ -123,9 +123,6 @@ def confirm_bulk_delete_dialog(conn, cursor, truck_id, truck_name, start_date, e
         st.success(f"Successfully deleted {count} records! You can now re-upload your corrected file.")
         st.rerun()
 
-# ==========================================
-# NEW ADMIN-ONLY CLEAR DATA DIALOGS
-# ==========================================
 @st.dialog("⚠️ CONFIRM CLEAR ALL IN (UPLIFT) DATA")
 def confirm_clear_in_dialog(conn, cursor):
     cursor.execute("SELECT COUNT(*) FROM transactions WHERE type = 'IN'")
@@ -203,43 +200,97 @@ def render_transactions(conn, cursor, truck_dict, truck_list):
         truck_id = truck_dict[truck]
 
         balance = get_balance(conn, truck_id)
-        st.info(f"Current Balance: {balance:,.2f} L")
-
-        date = st.date_input("Date", key="tx_date")
-        liters = st.number_input("Liters", min_value=0.0, key="tx_liters")
+        st.info(f"Current Balance for **{truck}**: **{balance:,.2f} L**")
 
         if mode == "UPLIFT (Fuel IN)":
-            selected_supplier_name = st.selectbox("Select Supplier", supplier_list if supplier_list else ["Default Supplier"])
-            supplier_id = supplier_dict.get(selected_supplier_name, None)
+            with st.form("uplift_form", clear_on_submit=True):
+                in_date = st.date_input("Date", value=datetime.now().date(), key="uplift_date")
+                in_liters = st.number_input("Liters (IN)", min_value=0.0, step=100.0, value=0.0, key="uplift_liters_input")
+                selected_supplier_name = st.selectbox("Select Supplier", supplier_list if supplier_list else ["Default Supplier"])
+                submit_uplift = st.form_submit_button("Save Uplift Entry", type="primary")
 
-            if st.button("Save Uplift Entry", type="primary"):
-                if liters <= 0:
+            if submit_uplift:
+                if in_liters <= 0:
                     st.error("Please enter a valid amount of liters.")
                 else:
+                    supplier_id = supplier_dict.get(selected_supplier_name, None)
                     cursor.execute("""
                         INSERT INTO transactions (truck_id, date, liters, type, supplier_id, created_by) 
                         VALUES (%s, %s, %s, 'IN', %s, %s)
-                    """, (truck_id, str(date), liters, supplier_id, active_user))
+                    """, (truck_id, str(in_date), in_liters, supplier_id, active_user))
                     conn.commit()
-                    log_action(cursor, conn, f"Added Uplift of {liters:,.2f} L from Supplier '{selected_supplier_name}' for Truck '{truck}' on date {date}")
+                    log_action(cursor, conn, f"Added Uplift of {in_liters:,.2f} L from Supplier '{selected_supplier_name}' for Truck '{truck}' on date {in_date}")
                     st.success("Uplift recorded successfully! ✅")
                     st.rerun()
 
+            # --- Scrollable Previous Uplift Entries (5-row height view) ---
+            st.markdown("### 📜 Previous Uplift (IN) Entries")
+            recent_in_df = pd.read_sql_query("""
+                SELECT 
+                    transactions.id AS "TX ID",
+                    transactions.date AS "Date",
+                    transactions.liters AS "Liters",
+                    suppliers.name AS "Supplier",
+                    COALESCE(transactions.created_by, 'System') AS "Created By"
+                FROM transactions
+                LEFT JOIN suppliers ON transactions.supplier_id = suppliers.id
+                WHERE transactions.truck_id = %s AND transactions.type = 'IN'
+                ORDER BY transactions.id DESC
+            """, conn, params=[truck_id])
+
+            if recent_in_df.empty:
+                st.info("No previous Uplift entries found for this truck.")
+            else:
+                st.dataframe(
+                    recent_in_df.style.format({'Liters': '{:,.2f}'}),
+                    use_container_width=True,
+                    hide_index=True,
+                    height=220  # Approx 5 rows with scrollbar
+                )
+
         elif mode == "DELIVERY (Fuel OUT)":
-            if st.button("Save Delivery Entry", type="primary"):
-                if liters <= 0:
+            with st.form("delivery_form", clear_on_submit=True):
+                out_date = st.date_input("Date", value=datetime.now().date(), key="delivery_date")
+                out_liters = st.number_input("Liters (OUT)", min_value=0.0, step=100.0, value=0.0, key="delivery_liters_input")
+                submit_delivery = st.form_submit_button("Save Delivery Entry", type="primary")
+
+            if submit_delivery:
+                if out_liters <= 0:
                     st.error("Please enter a valid amount of liters.")
-                elif liters > balance:
+                elif out_liters > balance:
                     st.error("❌ Insufficient balance in this truck!")
                 else:
                     cursor.execute("""
                         INSERT INTO transactions (truck_id, date, liters, type, created_by) 
                         VALUES (%s, %s, %s, 'OUT', %s)
-                    """, (truck_id, str(date), liters, active_user))
+                    """, (truck_id, str(out_date), out_liters, active_user))
                     conn.commit()
-                    log_action(cursor, conn, f"Added Delivery of {liters:,.2f} L for Truck '{truck}' on date {date}")
+                    log_action(cursor, conn, f"Added Delivery of {out_liters:,.2f} L for Truck '{truck}' on date {out_date}")
                     st.success("Delivery recorded successfully! ✅")
                     st.rerun()
+
+            # --- Scrollable Previous Delivery Entries (5-row height view) ---
+            st.markdown("### 📜 Previous Delivery (OUT) Entries")
+            recent_out_df = pd.read_sql_query("""
+                SELECT 
+                    transactions.id AS "TX ID",
+                    transactions.date AS "Date",
+                    transactions.liters AS "Liters",
+                    COALESCE(transactions.created_by, 'System') AS "Created By"
+                FROM transactions
+                WHERE transactions.truck_id = %s AND transactions.type = 'OUT'
+                ORDER BY transactions.id DESC
+            """, conn, params=[truck_id])
+
+            if recent_out_df.empty:
+                st.info("No previous Delivery entries found for this truck.")
+            else:
+                st.dataframe(
+                    recent_out_df.style.format({'Liters': '{:,.2f}'}),
+                    use_container_width=True,
+                    hide_index=True,
+                    height=220  # Approx 5 rows with scrollbar
+                )
 
     # ==========================================
     # TAB 2: TRUCK TO TRUCK TRANSFER
@@ -328,7 +379,6 @@ def render_transactions(conn, cursor, truck_dict, truck_list):
     with tab4:
         st.subheader("🧐 Historical Audit & Filter Engine")
 
-        # --- ADMIN WIPE DATA SECTION ---
         if user_role == "ADMIN":
             with st.expander("🔑 Admin Database Purge Controls", expanded=False):
                 st.warning("⚠️ **ADMIN ONLY ZONE:** Clearing transaction types will purge corresponding records across all trucks.")
@@ -368,7 +418,6 @@ def render_transactions(conn, cursor, truck_dict, truck_list):
                 horizontal=True
             )
 
-            # 1. SUMMARIZED TOTALS BY TRUCK
             if view_mode == "📊 Summarized Fleet Totals":
                 st.markdown("### 🚛 Total Fuel Summary by Truck")
                 
@@ -392,7 +441,6 @@ def render_transactions(conn, cursor, truck_dict, truck_list):
                     hide_index=True
                 )
 
-            # 2. BULK DELETE TOOL (DATE RANGE & TRUCK)
             elif view_mode == "🚨 Bulk Delete Operations":
                 st.markdown("### 🗑️ Bulk Delete Uploaded Data")
                 st.warning("Use this panel to erase wrong batch uploads for a truck and date range before re-uploading your clean file.")
@@ -421,7 +469,6 @@ def render_transactions(conn, cursor, truck_dict, truck_list):
                     else:
                         st.error("Please select both a start date and end date.")
 
-            # 3. DETAILED LIST WITH EDIT & SINGLE DELETE
             else:
                 with st.container(border=True):
                     st.markdown("⚡ **Filter Controls**")
@@ -465,7 +512,6 @@ def render_transactions(conn, cursor, truck_dict, truck_list):
                         (filtered_df['id'].astype(str).str.contains(search_query))
                     ]
 
-                # EXCEL DOWNLOAD BUTTON GENERATION
                 col_info, col_download = st.columns([3, 1])
                 col_info.markdown(f"Showing **{len(filtered_df)}** matching transaction actions:")
 
