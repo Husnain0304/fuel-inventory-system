@@ -5,15 +5,21 @@ import re
 def render_bulk_upload(conn, cursor, truck_dict, truck_list):
     st.title("📥 Bulk Delivery Upload")
     
-    st.info("💡 Upload Excel with columns: **date** (DD-MM-YYYY), **truck**, **liters**")
+    st.info("💡 Upload Excel with columns: **date** (DD-MM-YYYY), **truck**, **liters**, and **ticket_number**")
 
-    # Initialize tracking table for deduplication / history tracking
+    # 1. Initialize tracking table for uploaded files
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS uploaded_files (
             id SERIAL PRIMARY KEY,
             file_name VARCHAR(255) UNIQUE,
             uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
+    """)
+    
+    # 2. Ensure ticket_number column exists in transactions table
+    cursor.execute("""
+        ALTER TABLE transactions 
+        ADD COLUMN IF NOT EXISTS ticket_number TEXT;
     """)
     conn.commit()
 
@@ -57,19 +63,34 @@ def render_bulk_upload(conn, cursor, truck_dict, truck_list):
         if st.session_state["staged_df"] is None or st.session_state["staged_filename"] != file_name:
             try:
                 raw_df = pd.read_excel(uploaded_file)
-                raw_df.columns = [str(c).strip().lower() for c in raw_df.columns]
+                
+                # Standardize column header names (e.g., "Ticket No", "ticket_number", "Ticket" -> "ticket_number")
+                col_map = {}
+                for c in raw_df.columns:
+                    c_clean = str(c).strip().lower().replace(" ", "_").replace(".", "")
+                    if c_clean in ["ticket", "ticket_no", "ticket_number", "ticketno"]:
+                        col_map[c] = "ticket_number"
+                    elif c_clean in ["date", "truck", "liters"]:
+                        col_map[c] = c_clean
+                
+                raw_df = raw_df.rename(columns=col_map)
                 
                 required_cols = {"date", "truck", "liters"}
                 if not required_cols.issubset(set(raw_df.columns)):
-                    st.error("❌ **Upload Failed!** Missing required columns. Your file must contain: `date`, `truck`, and `liters`.")
+                    st.error("❌ **Upload Failed!** Missing required columns. Your file must contain: `date`, `truck`, and `liters` (and optionally `ticket_number`).")
                     return
 
-                # Convert values to standard usable types for data editor
+                # If ticket_number is not in Excel, create an empty column for manual entry
+                if "ticket_number" not in raw_df.columns:
+                    raw_df["ticket_number"] = ""
+
+                # Clean & convert values to standard usable types for data editor
                 raw_df['date'] = raw_df['date'].astype(str).str.strip()
                 raw_df['truck'] = raw_df['truck'].astype(str).str.strip()
                 raw_df['liters'] = pd.to_numeric(raw_df['liters'], errors='coerce').fillna(0.0)
+                raw_df['ticket_number'] = raw_df['ticket_number'].fillna("").astype(str).str.strip()
 
-                st.session_state["staged_df"] = raw_df[['date', 'truck', 'liters']].copy()
+                st.session_state["staged_df"] = raw_df[['date', 'truck', 'liters', 'ticket_number']].copy()
                 st.session_state["staged_filename"] = file_name
             except Exception as e:
                 st.error(f"❌ **Upload Failed!** Could not read Excel file structure: {str(e)}")
@@ -81,7 +102,7 @@ def render_bulk_upload(conn, cursor, truck_dict, truck_list):
     if st.session_state["staged_df"] is not None:
         st.markdown("---")
         st.subheader(f"📋 Reviewing Uploaded File: `{st.session_state['staged_filename']}`")
-        st.write("Edit cells directly in the table below or delete rows before saving to the database:")
+        st.write("Edit cells directly in the table below (including Ticket Numbers) or delete rows before saving:")
 
         # Interactive Data Editor for Row Editing & Deletion
         edited_df = st.data_editor(
@@ -91,7 +112,8 @@ def render_bulk_upload(conn, cursor, truck_dict, truck_list):
             column_config={
                 "date": st.column_config.TextColumn("Date (DD-MM-YYYY or YYYY-MM-DD)", required=True),
                 "truck": st.column_config.TextColumn("Truck Number / Plate", required=True),
-                "liters": st.column_config.NumberColumn("Liters (Fuel Out)", min_value=0.01, format="%.2f L", required=True)
+                "liters": st.column_config.NumberColumn("Liters (Fuel Out)", min_value=0.01, format="%.2f L", required=True),
+                "ticket_number": st.column_config.TextColumn("Ticket Number", required=False)
             },
             key="bulk_data_editor"
         )
@@ -131,6 +153,7 @@ def render_bulk_upload(conn, cursor, truck_dict, truck_list):
                 raw_date = str(row['date']).strip()
                 raw_truck = str(row['truck']).strip()
                 raw_liters = row['liters']
+                raw_ticket = str(row['ticket_number']).strip() if pd.notna(row['ticket_number']) else ""
 
                 failed_fields = []
                 errors = []
@@ -172,6 +195,11 @@ def render_bulk_upload(conn, cursor, truck_dict, truck_list):
                     errors.append(f"Format mismatch in '{raw_truck}'")
                     failed_fields.append("Truck")
 
+                # Ticket Number Check (If you want ticket number to be strictly mandatory, uncomment below)
+                # if not raw_ticket:
+                #     errors.append("Ticket Number is required")
+                #     failed_fields.append("Ticket Number")
+
                 # Log formatting errors
                 if errors:
                     error_records.append({
@@ -179,16 +207,18 @@ def render_bulk_upload(conn, cursor, truck_dict, truck_list):
                         "Truck": raw_truck,
                         "Date": raw_date,
                         "Liters": raw_liters,
+                        "Ticket No": raw_ticket,
                         "Reason": " | ".join(errors)
                     })
                     continue
 
-                # Duplicate Transaction Check against DB
+                # Duplicate Transaction Check against DB (Checks Truck, Date, Liters, and Ticket Number)
                 truck_id = truck_dict[raw_truck]
                 dup_check = pd.read_sql_query("""
                     SELECT id FROM transactions 
                     WHERE truck_id = %s AND date = %s AND liters = %s AND type = 'OUT'
-                """, conn, params=[truck_id, str(parsed_date), liters_val])
+                      AND (ticket_number = %s OR (ticket_number IS NULL AND %s = ''))
+                """, conn, params=[truck_id, str(parsed_date), liters_val, raw_ticket, raw_ticket])
 
                 if not dup_check.empty:
                     skipped_records.append({
@@ -196,14 +226,15 @@ def render_bulk_upload(conn, cursor, truck_dict, truck_list):
                         "Truck": raw_truck,
                         "Date": str(parsed_date),
                         "Liters": f"{liters_val:,.2f} L",
+                        "Ticket No": raw_ticket,
                         "Reason": "Duplicate transaction already in database"
                     })
                 else:
-                    # Insert Valid Delivery Entry
+                    # Insert Valid Delivery Entry with Ticket Number
                     cursor.execute("""
-                        INSERT INTO transactions (truck_id, date, liters, type) 
-                        VALUES (%s, %s, %s, 'OUT') RETURNING id
-                    """, (truck_id, str(parsed_date), liters_val))
+                        INSERT INTO transactions (truck_id, date, liters, type, ticket_number) 
+                        VALUES (%s, %s, %s, 'OUT', %s) RETURNING id
+                    """, (truck_id, str(parsed_date), liters_val, raw_ticket))
                     
                     last_id = cursor.fetchone()[0]
                     inserted_ids.append(last_id)
@@ -211,7 +242,8 @@ def render_bulk_upload(conn, cursor, truck_dict, truck_list):
                         "id": last_id,
                         "Truck": raw_truck,
                         "Date": str(parsed_date),
-                        "Liters": liters_val
+                        "Liters": liters_val,
+                        "Ticket No": raw_ticket
                     })
 
             # Handle Commit & Cleanup
