@@ -64,27 +64,24 @@ def render_bulk_upload(conn, cursor, truck_dict, truck_list):
             file_name = uploaded_file.name
 
             # Check for Duplicate File Name
-            duplicate_file_check = pd.read_sql_query(
-                "SELECT uploaded_at FROM uploaded_files WHERE file_name = %s", 
-                conn, 
-                params=[file_name]
-            )
+            cursor.execute("SELECT uploaded_at FROM uploaded_files WHERE file_name = %s", (file_name,))
+            duplicate_row = cursor.fetchone()
 
             bypass_upload = False
-            if not duplicate_file_check.empty:
-                upload_time = duplicate_file_check.iloc[0]["uploaded_at"]
+            if duplicate_row:
+                upload_time = duplicate_row[0]
                 st.error(f"⚠️ **Duplicate File Detected!**\n\nThe file **'{file_name}'** was already imported on `{upload_time}`.")
                 bypass_upload = st.checkbox("🔄 Force re-upload/re-stage this file anyway.")
                 if not bypass_upload:
                     st.warning("Please rename your file, or check the box above to force parsing.")
                     return
 
-            # Parse File into Session State
+            # Parse File into Session State Staging Area
             if st.session_state["staged_df"] is None or st.session_state["staged_filename"] != file_name:
                 try:
                     raw_df = pd.read_excel(uploaded_file)
                     
-                    # Standardize column headers
+                    # Standardize column header names
                     col_map = {}
                     for c in raw_df.columns:
                         c_clean = str(c).strip().lower().replace(" ", "_").replace(".", "")
@@ -103,7 +100,7 @@ def render_bulk_upload(conn, cursor, truck_dict, truck_list):
                     if "ticket_number" not in raw_df.columns:
                         raw_df["ticket_number"] = ""
 
-                    # Clean data formatting
+                    # Clean & convert data types
                     raw_df['date'] = raw_df['date'].astype(str).str.strip()
                     raw_df['truck'] = raw_df['truck'].astype(str).str.strip()
                     raw_df['liters'] = pd.to_numeric(raw_df['liters'], errors='coerce').fillna(0.0)
@@ -207,15 +204,16 @@ def render_bulk_upload(conn, cursor, truck_dict, truck_list):
                         })
                         continue
 
-                    # Duplicate Check
+                    # Duplicate Transaction Check
                     truck_id = truck_dict[raw_truck]
-                    dup_check = pd.read_sql_query("""
+                    cursor.execute("""
                         SELECT id FROM transactions 
                         WHERE truck_id = %s AND date = %s AND liters = %s AND type = 'OUT'
                           AND (ticket_number = %s OR (ticket_number IS NULL AND %s = ''))
-                    """, conn, params=[truck_id, str(parsed_date), liters_val, raw_ticket, raw_ticket])
+                    """, (truck_id, str(parsed_date), liters_val, raw_ticket, raw_ticket))
+                    dup_check = cursor.fetchone()
 
-                    if not dup_check.empty:
+                    if dup_check:
                         skipped_records.append({
                             "Row": row_num, "Truck": raw_truck, "Date": str(parsed_date),
                             "Liters": f"{liters_val:,.2f} L", "Ticket No": raw_ticket, "Reason": "Duplicate transaction"
@@ -260,7 +258,7 @@ def render_bulk_upload(conn, cursor, truck_dict, truck_list):
     with tab_history:
         st.subheader("📁 Uploaded Files Directory")
 
-        files_df = pd.read_sql_query("""
+        cursor.execute("""
             SELECT 
                 f.id AS file_id,
                 f.file_name,
@@ -271,7 +269,10 @@ def render_bulk_upload(conn, cursor, truck_dict, truck_list):
             LEFT JOIN transactions t ON f.id = t.file_id
             GROUP BY f.id, f.file_name, f.uploaded_at
             ORDER BY f.uploaded_at DESC;
-        """, conn)
+        """)
+        file_rows = cursor.fetchall()
+        file_cols = [desc[0] for desc in cursor.description]
+        files_df = pd.DataFrame(file_rows, columns=file_cols)
 
         if files_df.empty:
             st.info("No files have been uploaded yet.")
@@ -294,12 +295,15 @@ def render_bulk_upload(conn, cursor, truck_dict, truck_list):
             st.write(f"### 📄 Transactions in `{selected_file}`")
 
             # Fetch file transactions
-            tx_df = pd.read_sql_query("""
+            cursor.execute("""
                 SELECT id, date, truck_id, liters, ticket_number 
                 FROM transactions 
                 WHERE file_id = %s 
                 ORDER BY date DESC, id DESC;
-            """, conn, params=[sel_file_id])
+            """, (sel_file_id,))
+            tx_rows = cursor.fetchall()
+            tx_cols = [desc[0] for desc in cursor.description]
+            tx_df = pd.DataFrame(tx_rows, columns=tx_cols)
 
             if tx_df.empty:
                 st.warning("No transactions remaining under this file.")
@@ -325,7 +329,6 @@ def render_bulk_upload(conn, cursor, truck_dict, truck_list):
 
                 if col_save.button("💾 Save Changes to File Transactions", type="primary"):
                     try:
-                        # Process updates/deletions
                         current_ids = edited_tx["id"].dropna().tolist()
                         deleted_ids = set(tx_df["id"]) - set(current_ids)
 
@@ -366,7 +369,11 @@ def render_bulk_upload(conn, cursor, truck_dict, truck_list):
         col_s1, col_s2, col_s3 = st.columns(3)
         search_ticket = col_s1.text_input("Search Ticket Number", placeholder="e.g. T-10293")
         search_truck = col_s2.selectbox("Filter by Truck", ["All Trucks"] + truck_list)
-        search_file = col_s3.selectbox("Filter by Source File", ["All Files"] + files_df["file_name"].tolist() if not files_df.empty else ["All Files"])
+        
+        file_options = ["All Files"]
+        if 'files_df' in locals() and not files_df.empty:
+            file_options += files_df["file_name"].tolist()
+        search_file = col_s3.selectbox("Filter by Source File", file_options)
 
         col_d1, col_d2, col_l1, col_l2 = st.columns(4)
         start_date = col_d1.date_input("Start Date", value=None)
@@ -379,12 +386,11 @@ def render_bulk_upload(conn, cursor, truck_dict, truck_list):
             SELECT 
                 t.id, 
                 t.date, 
-                tr.truck_name, 
+                t.truck_id, 
                 t.liters, 
                 t.ticket_number, 
                 COALESCE(f.file_name, 'Manual Entry') AS source_file
             FROM transactions t
-            LEFT JOIN trucks tr ON t.truck_id = tr.id
             LEFT JOIN uploaded_files f ON t.file_id = f.id
             WHERE 1=1
         """
@@ -420,7 +426,16 @@ def render_bulk_upload(conn, cursor, truck_dict, truck_list):
 
         query += " ORDER BY t.date DESC, t.id DESC LIMIT 500;"
 
-        results_df = pd.read_sql_query(query, conn, params=params)
+        # Execute query safely with psycopg2 cursor
+        cursor.execute(query, tuple(params))
+        rows = cursor.fetchall()
+        colnames = [desc[0] for desc in cursor.description]
+        
+        results_df = pd.DataFrame(rows, columns=colnames)
+
+        if not results_df.empty:
+            results_df["truck"] = results_df["truck_id"].map(truck_id_to_name)
+            results_df = results_df[["id", "date", "truck", "liters", "ticket_number", "source_file"]]
 
         st.markdown(f"**Found {len(results_df)} matching record(s)**")
         st.dataframe(
@@ -430,7 +445,7 @@ def render_bulk_upload(conn, cursor, truck_dict, truck_list):
             column_config={
                 "id": st.column_config.NumberColumn("Tx ID"),
                 "date": st.column_config.DateColumn("Date"),
-                "truck_name": st.column_config.TextColumn("Truck"),
+                "truck": st.column_config.TextColumn("Truck"),
                 "liters": st.column_config.NumberColumn("Liters", format="%.2f L"),
                 "ticket_number": st.column_config.TextColumn("Ticket Number"),
                 "source_file": st.column_config.TextColumn("Uploaded File Source")
