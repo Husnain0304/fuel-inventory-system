@@ -1,252 +1,259 @@
 import streamlit as st
 import pandas as pd
-import plotly.graph_objects as go
-import plotly.express as px
 from datetime import datetime, date, timedelta
 
 def render_dashboard(conn, truck_dict, truck_list):
-    st.title("⛽ FILLIT DIESEL — OPERATIONAL COMMAND CENTER")
-    st.caption("Live Fleet Inventory, Predictive Analytics & Demand Intelligence")
+    st.title("⛽ FILLIT DIESEL — OPERATIONAL DASHBOARD")
+    st.caption("Fleet Inventory, Supplier Uplifts & Demand Forecasting")
     st.markdown("---")
 
-    # ==========================================
-    # 1. LIVE SYSTEM FUEL BALANCE & METRIC CARDS
-    # ==========================================
-    live_inventory_query = """
-        SELECT 
-            CONCAT(trucks.emirate, ' ', trucks.plate_code, ' ', trucks.plate_number) AS truck,
-            SUM(CASE WHEN type='IN' THEN liters ELSE 0 END) -
-            SUM(CASE WHEN type='OUT' THEN liters ELSE 0 END) AS current_balance
-        FROM transactions
-        JOIN trucks ON transactions.truck_id = trucks.id
-        GROUP BY trucks.id, trucks.emirate, trucks.plate_code, trucks.plate_number
-        ORDER BY current_balance DESC
-    """
-    inventory_df = pd.read_sql_query(live_inventory_query, conn)
-    total_current_inventory = inventory_df["current_balance"].sum() if not inventory_df.empty else 0.0
+    # Reverse lookup dictionary for trucks
+    truck_id_to_name = {v: k for k, v in truck_dict.items()}
 
-    # Historical Daily Outflow (Last 30 Days)
-    thirty_days_ago = (date.today() - timedelta(days=30)).strftime("%Y-%m-%d")
-    outflow_query = """
-        SELECT date, SUM(liters) as daily_out
-        FROM transactions
-        WHERE type = 'OUT' AND date >= %s
-        GROUP BY date
-    """
-    outflow_df = pd.read_sql_query(outflow_query, conn, params=[thirty_days_ago])
+    # Fetch cursor for direct SQL queries
+    cursor = conn.cursor()
 
-    if not outflow_df.empty:
-        total_30d_out = outflow_df["daily_out"].sum()
-        active_days = len(outflow_df["date"].unique())
-        avg_daily_consumption = total_30d_out / max(active_days, 1)
-    else:
-        avg_daily_consumption = 0.0
+    # Ensure supplier column exists on transactions table for safety
+    cursor.execute("""
+        ALTER TABLE transactions 
+        ADD COLUMN IF NOT EXISTS supplier TEXT;
+    """)
+    conn.commit()
 
-    # Upper Visual Layout: Gauge Needle + Fleet Breakdown Chart
-    col_gauge, col_pie = st.columns([2, 3])
-
-    with col_gauge:
-        st.subheader("🎯 System Fuel Capacity Gauge")
-        
-        # Max capacity target dynamic scaling (assumes minimum 50k L gauge scale)
-        max_capacity_target = max(50000.0, total_current_inventory * 1.3)
-        
-        # Custom Plotly Gauge Needle Meter
-        fig_gauge = go.Figure(go.Indicator(
-            mode="gauge+number+delta",
-            value=total_current_inventory,
-            domain={'x': [0, 1], 'y': [0, 1]},
-            title={'text': "Total Diesel Stock (Liters)", 'font': {'size': 18, 'color': "#0F172A"}},
-            number={'suffix': " L", 'font': {'size': 26, 'color': "#1E293B"}},
-            gauge={
-                'axis': {'range': [0, max_capacity_target], 'tickwidth': 1, 'tickcolor': "#475569"},
-                'bar': {'color': "#0284C7"},
-                'bgcolor': "white",
-                'borderwidth': 2,
-                'bordercolor': "#E2E8F0",
-                'steps': [
-                    {'range': [0, max_capacity_target * 0.25], 'color': '#FECACA'},
-                    {'range': [max_capacity_target * 0.25, max_capacity_target * 0.60], 'color': '#FEF08A'},
-                    {'range': [max_capacity_target * 0.60, max_capacity_target], 'color': '#BBF7D0'}
-                ],
-                'threshold': {
-                    'line': {'color': "#DC2626", 'width': 4},
-                    'thickness': 0.75,
-                    'value': total_current_inventory
-                }
-            }
-        ))
-        fig_gauge.update_layout(height=280, margin=dict(l=20, r=20, t=40, b=20))
-        st.plotly_chart(fig_gauge, use_container_width=True)
-
-    with col_pie:
-        st.subheader("🚛 Live Fleet Stock Distribution")
-        if not inventory_df.empty:
-            fig_donut = px.pie(
-                inventory_df, 
-                names="truck", 
-                values="current_balance", 
-                hole=0.5,
-                color_discrete_sequence=px.colors.qualitative.Prism
-            )
-            fig_donut.update_traces(textinfo="label+value", texttemplate="%{label}:<br>%{value:,.0f} L")
-            fig_donut.update_layout(height=280, margin=dict(l=10, r=10, t=30, b=10), showlegend=False)
-            st.plotly_chart(fig_donut, use_container_width=True)
-        else:
-            st.info("No active fleet balances registered.")
-
-    st.markdown("---")
-
-    # ==========================================
-    # 2. AD-HOC DEMAND & PREDICTIVE FORECASTING
-    # ==========================================
-    st.subheader("🔮 Predictive Stock & Ad-Hoc Demand Simulator")
-
-    with st.expander("➕ Inject Ad-Hoc / New Customer Expected Bulk Orders", expanded=True):
-        st.caption("Simulate impact on inventory reserves by specifying expected order volume and requested date.")
-        col_ad1, col_ad2, col_ad3 = st.columns([2, 2, 3])
-        future_date = col_ad1.date_input("Target Delivery Date", value=date.today() + timedelta(days=1))
-        ad_hoc_liters = col_ad2.number_input("Ad-Hoc Order Volume (Liters)", min_value=0.0, step=500.0)
-        demand_notes = col_ad3.text_input("Customer / Project Reference", placeholder="e.g. Ad-hoc Construction Site Fleet")
-
-    effective_stock = total_current_inventory - ad_hoc_liters
-
-    if avg_daily_consumption > 0:
-        days_until_depletion = effective_stock / avg_daily_consumption
-        estimated_depletion_date = date.today() + timedelta(days=max(0, int(days_until_depletion)))
-    else:
-        days_until_depletion = 0
-        estimated_depletion_date = "N/A"
-
-    col_m1, col_m2, col_m3, col_m4 = st.columns(4)
-    col_m1.metric("30-Day Avg Outflow", f"{avg_daily_consumption:,.2f} L/day")
-    col_m2.metric("Ad-Hoc Demand Applied", f"{ad_hoc_liters:,.2f} L")
-    col_m3.metric("Adjusted Stock Reserve", f"{effective_stock:,.2f} L")
+    # =========================================================================
+    # SECTION 1: LIVE TRUCK INVENTORY & SIMPLE BALANCE LOOKUP
+    # =========================================================================
+    st.subheader("🚚 1. Live Truck Inventory & Fleet Balances")
     
-    if isinstance(estimated_depletion_date, date):
-        col_m4.metric("Est. Depletion Date", estimated_depletion_date.strftime("%Y-%m-%d"))
+    # Global Fleet Balance Query
+    bal_query = """
+        SELECT 
+            t.truck_id,
+            SUM(CASE WHEN t.type = 'IN' THEN t.liters ELSE 0 END) AS total_in,
+            SUM(CASE WHEN t.type = 'OUT' THEN t.liters ELSE 0 END) AS total_out,
+            SUM(CASE WHEN t.type = 'IN' THEN t.liters ELSE 0 END) -
+            SUM(CASE WHEN t.type = 'OUT' THEN t.liters ELSE 0 END) AS current_balance
+        FROM transactions t
+        GROUP BY t.truck_id
+    """
+    cursor.execute(bal_query)
+    bal_rows = cursor.fetchall()
+    
+    fleet_bal_df = pd.DataFrame(bal_rows, columns=["truck_id", "total_in", "total_out", "current_balance"])
+    if not fleet_bal_df.empty:
+        fleet_bal_df["truck"] = fleet_bal_df["truck_id"].map(truck_id_to_name)
     else:
-        col_m4.metric("Est. Depletion Date", estimated_depletion_date)
+        fleet_bal_df = pd.DataFrame(columns=["truck_id", "total_in", "total_out", "current_balance", "truck"])
 
-    # VISUAL FORECAST CHART
-    st.markdown("#### 📈 Interactive Calendar Lookahead Projection")
-    target_forecast_date = st.date_input("Select Calendar Horizon Date", value=date.today() + timedelta(days=14))
+    total_live_stock = fleet_bal_df["current_balance"].sum() if not fleet_bal_df.empty else 0.0
 
-    days_ahead = (target_forecast_date - date.today()).days
+    # Section Top Metric Summary
+    m1, m2, m3 = st.columns(3)
+    m1.metric("Total Fleet Current Balance", f"{total_live_stock:,.2f} L")
+    m2.metric("Active Operating Trucks", len(fleet_bal_df[fleet_bal_df["current_balance"] > 0]))
+    m3.metric("Total System Inflow (Uplifted)", f"{fleet_bal_df['total_in'].sum():,.2f} L" if not fleet_bal_df.empty else "0.00 L")
 
-    if days_ahead > 0:
-        forecast_dates = [date.today() + timedelta(days=i) for i in range(days_ahead + 1)]
-        projected_stock_levels = []
+    # Filters for Inventory Table
+    with st.expander("🔍 Filter Inventory Table", expanded=True):
+        col_f1, col_f2, col_f3, col_f4 = st.columns(4)
+        inv_start = col_f1.date_input("Start Date", value=None, key="inv_start")
+        inv_end = col_f2.date_input("End Date", value=None, key="inv_end")
+        selected_truck = col_f3.selectbox("Filter Truck", ["All Trucks"] + truck_list, key="inv_truck")
+        min_balance_filter = col_f4.number_input("Min Current Liters", value=0.0, step=100.0, key="inv_liters")
+
+    # Transaction-filtered inventory building if dates/trucks selected
+    filtered_inv_query = """
+        SELECT 
+            t.truck_id,
+            SUM(CASE WHEN t.type = 'IN' THEN t.liters ELSE 0 END) AS in_liters,
+            SUM(CASE WHEN t.type = 'OUT' THEN t.liters ELSE 0 END) AS out_liters,
+            SUM(CASE WHEN t.type = 'IN' THEN t.liters ELSE 0 END) -
+            SUM(CASE WHEN t.type = 'OUT' THEN t.liters ELSE 0 END) AS balance
+        FROM transactions t
+        WHERE 1=1
+    """
+    f_params = []
+    if inv_start:
+        filtered_inv_query += " AND t.date >= %s"
+        f_params.append(str(inv_start))
+    if inv_end:
+        filtered_inv_query += " AND t.date <= %s"
+        f_params.append(str(inv_end))
+    if selected_truck != "All Trucks":
+        filtered_inv_query += " AND t.truck_id = %s"
+        f_params.append(truck_dict[selected_truck])
+
+    filtered_inv_query += " GROUP BY t.truck_id"
+
+    cursor.execute(filtered_inv_query, tuple(f_params))
+    f_rows = cursor.fetchall()
+    disp_inv_df = pd.DataFrame(f_rows, columns=["truck_id", "in_liters", "out_liters", "balance"])
+
+    if not disp_inv_df.empty:
+        disp_inv_df["truck"] = disp_inv_df["truck_id"].map(truck_id_to_name)
+        disp_inv_df = disp_inv_df[disp_inv_df["balance"] >= min_balance_filter]
+        disp_inv_df = disp_inv_df[["truck", "in_liters", "out_liters", "balance"]]
+    else:
+        disp_inv_df = pd.DataFrame(columns=["truck", "in_liters", "out_liters", "balance"])
+
+    st.dataframe(
+        disp_inv_df,
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "truck": st.column_config.TextColumn("Truck Name / Plate"),
+            "in_liters": st.column_config.NumberColumn("Total Uplifted (IN)", format="%.2f L"),
+            "out_liters": st.column_config.NumberColumn("Total Delivered (OUT)", format="%.2f L"),
+            "balance": st.column_config.NumberColumn("Live Inventory Balance", format="%.2f L")
+        }
+    )
+
+    st.markdown("---")
+
+    # =========================================================================
+    # SECTION 2: SUPPLIER-WISE & DATE-WISE UPLIFTED INVENTORY
+    # =========================================================================
+    st.subheader("⚓ 2. Total Uplifted Diesel (Supplier & Truck Wise)")
+
+    col_up1, col_up2, col_up3, col_up4 = st.columns(4)
+    up_start_date = col_up1.date_input("From Date", value=date.today() - timedelta(days=30), key="up_start")
+    up_end_date = col_up2.date_input("To Date", value=date.today(), key="up_end")
+    up_truck_filter = col_up3.selectbox("Filter Truck", ["All Trucks"] + truck_list, key="up_truck")
+    
+    # Fetch distinct suppliers from DB for filtering
+    cursor.execute("SELECT DISTINCT COALESCE(supplier, 'Unspecified Supplier') FROM transactions WHERE type='IN'")
+    supplier_options = ["All Suppliers"] + [row[0] for row in cursor.fetchall() if row[0]]
+    up_supplier_filter = col_up4.selectbox("Filter Supplier", supplier_options, key="up_supplier")
+
+    up_query = """
+        SELECT 
+            t.date,
+            t.truck_id,
+            COALESCE(t.supplier, 'Unspecified Supplier') AS supplier,
+            SUM(t.liters) AS uplifted_liters
+        FROM transactions t
+        WHERE t.type = 'IN' AND t.date BETWEEN %s AND %s
+    """
+    up_params = [str(up_start_date), str(up_end_date)]
+
+    if up_truck_filter != "All Trucks":
+        up_query += " AND t.truck_id = %s"
+        up_params.append(truck_dict[up_truck_filter])
+
+    if up_supplier_filter != "All Suppliers":
+        up_query += " AND t.supplier = %s"
+        up_params.append(up_supplier_filter)
+
+    up_query += " GROUP BY t.date, t.truck_id, t.supplier ORDER BY t.date DESC;"
+
+    cursor.execute(up_query, tuple(up_params))
+    up_rows = cursor.fetchall()
+    uplift_summary_df = pd.DataFrame(up_rows, columns=["date", "truck_id", "supplier", "uplifted_liters"])
+
+    if not uplift_summary_df.empty:
+        uplift_summary_df["truck"] = uplift_summary_df["truck_id"].map(truck_id_to_name)
         
-        current_calc_stock = total_current_inventory
-        for d in forecast_dates:
-            if d == future_date:
-                current_calc_stock -= ad_hoc_liters
-            current_calc_stock -= avg_daily_consumption
-            projected_stock_levels.append(max(0.0, current_calc_stock))
+        # Aggregate totals card
+        total_uplifted_in_period = uplift_summary_df["uplifted_liters"].sum()
+        st.info(f"💡 **Total Fuel Uplifted ({up_start_date} to {up_end_date}):** `{total_uplifted_in_period:,.2f} Liters` across selected suppliers/trucks.")
 
-        forecast_chart_df = pd.DataFrame({
-            "Date": forecast_dates,
-            "Projected Remaining Stock (L)": projected_stock_levels
+        # Breakdown pivot table
+        st.write("#### Supplier & Truck Uplift Breakdown Table")
+        display_up_df = uplift_summary_df[["date", "supplier", "truck", "uplifted_liters"]]
+        st.dataframe(
+            display_up_df,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "date": st.column_config.DateColumn("Uplift Date"),
+                "supplier": st.column_config.TextColumn("Fuel Supplier"),
+                "truck": st.column_config.TextColumn("Receiving Truck"),
+                "uplifted_liters": st.column_config.NumberColumn("Uplifted Liters", format="%.2f L")
+            }
+        )
+    else:
+        st.warning("No uplift records found for the selected date range and supplier/truck filters.")
+
+    st.markdown("---")
+
+    # =========================================================================
+    # SECTION 3: INVENTORY FORECAST & AD-HOC DELIVERY PLANNING
+    # =========================================================================
+    st.subheader("🔮 3. Simple Inventory Forecast & Ad-Hoc Delivery Planning")
+
+    # Historical consumption baseline selector
+    col_fc1, col_fc2, col_fc3 = st.columns(3)
+    baseline_range = col_fc1.selectbox("Forecast Consumption Baseline", ["Last 7 Days Average", "Last 30 Days Average"])
+    forecast_days = col_fc2.number_input("Forecast Days (e.g. 7 for Next Week)", min_value=1, max_value=30, value=7, step=1)
+    
+    # Calculate baseline daily consumption rate
+    lookback_days = 7 if baseline_range == "Last 7 Days Average" else 30
+    baseline_start_date = (date.today() - timedelta(days=lookback_days)).strftime("%Y-%m-%d")
+
+    cursor.execute("""
+        SELECT SUM(liters) FROM transactions 
+        WHERE type = 'OUT' AND date >= %s
+    """, (baseline_start_date,))
+    out_row = cursor.fetchone()
+    total_past_out = out_row[0] if out_row and out_row[0] is not None else 0.0
+
+    avg_daily_consumption = total_past_out / float(lookback_days)
+    col_fc3.metric(f"Avg Daily Outflow ({baseline_range})", f"{avg_daily_consumption:,.2f} L/day")
+
+    st.markdown("#### ⚡ Ad-Hoc Delivery Simulator")
+    col_ad1, col_ad2, col_ad3 = st.columns([2, 2, 3])
+    adhoc_date = col_ad1.date_input("Ad-hoc Delivery Date", value=date.today() + timedelta(days=1), key="adhoc_date")
+    adhoc_liters = col_ad2.number_input("Required Ad-Hoc Liters", min_value=0.0, value=0.0, step=500.0, key="adhoc_liters")
+    adhoc_note = col_ad3.text_input("Ad-Hoc Customer / Site Note", placeholder="e.g. Urgent construction order")
+
+    # Generate Forecast Table
+    forecast_rows = []
+    accumulated_req_no_adhoc = 0.0
+    accumulated_req_with_adhoc = 0.0
+
+    for day_idx in range(1, forecast_days + 1):
+        target_day = date.today() + timedelta(days=day_idx)
+        day_baseline_req = avg_daily_consumption
+
+        # Apply ad-hoc on selected delivery date
+        day_adhoc_req = adhoc_liters if (target_day == adhoc_date) else 0.0
+        day_total_with_adhoc = day_baseline_req + day_adhoc_req
+
+        accumulated_req_no_adhoc += day_baseline_req
+        accumulated_req_with_adhoc += day_total_with_adhoc
+
+        forecast_rows.append({
+            "day": f"Day {day_idx}",
+            "date": target_day.strftime("%Y-%m-%d"),
+            "daily_req_no_adhoc": day_baseline_req,
+            "daily_adhoc": day_adhoc_req,
+            "daily_req_with_adhoc": day_total_with_adhoc,
+            "cum_no_adhoc": accumulated_req_no_adhoc,
+            "cum_with_adhoc": accumulated_req_with_adhoc
         })
 
-        fig_line = px.area(
-            forecast_chart_df, 
-            x="Date", 
-            y="Projected Remaining Stock (L)",
-            title=f"Stock Depletion Forecast path through {target_forecast_date.strftime('%Y-%m-%d')}",
-            color_discrete_sequence=["#0284C7"]
-        )
-        fig_line.add_hline(y=0, line_dash="dash", line_color="red", annotation_text="Stock Depleted")
-        fig_line.update_layout(height=320, margin=dict(l=20, r=20, t=40, b=20))
-        st.plotly_chart(fig_line, use_container_width=True)
+    forecast_df = pd.DataFrame(forecast_rows)
 
-        final_projected_stock = projected_stock_levels[-1]
-        if final_projected_stock <= 0:
-            st.warning(f"⚠️ **Stock Alert:** Current reserves and projected consumption indicate fuel depletion before {target_forecast_date.strftime('%Y-%m-%d')}. Additional uplift required!")
-        else:
-            st.success(f"✅ **Stock Safe:** Expected inventory reserve on {target_forecast_date.strftime('%Y-%m-%d')} will be approximately **{final_projected_stock:,.2f} L**.")
-    else:
-        st.caption("Select a future date above to render the projected inventory area chart.")
+    # Forecast Summary Cards
+    st.markdown("#### 📊 Forecast Totals Summary")
+    mc1, mc2, mc3 = st.columns(3)
+    mc1.metric(f"Total Required ({forecast_days} Days - No Ad-Hoc)", f"{accumulated_req_no_adhoc:,.2f} L")
+    mc2.metric(f"Total Ad-Hoc Demand Added", f"{adhoc_liters:,.2f} L")
+    mc3.metric(f"Total Required ({forecast_days} Days - WITH Ad-Hoc)", f"{accumulated_req_with_adhoc:,.2f} L", delta=f"+{adhoc_liters:,.2f} L" if adhoc_liters > 0 else None)
 
-    st.markdown("---")
-
-    # ==========================================
-    # 3. DATE-WISE & TRUCK-WISE OPERATIONS
-    # ==========================================
-    st.subheader("📊 Operational Fuel Movements & Truck Breakdown")
-
-    col_f1, col_f2, col_f3 = st.columns([2, 2, 3])
-    from_date = col_f1.date_input("From Date", value=date.today() - timedelta(days=7))
-    to_date = col_f2.date_input("To Date", value=date.today())
-    selected_trucks = col_f3.multiselect("Filter Trucks (Leave blank for All)", truck_list)
-
-    params = [str(from_date), str(to_date)]
-
-    if selected_trucks:
-        truck_ids = [truck_dict[t] for t in selected_trucks]
-        placeholders = ",".join(["%s"] * len(truck_ids))
-        truck_filter_sql = f" AND transactions.truck_id IN ({placeholders}) "
-        params.extend(truck_ids)
-    else:
-        truck_filter_sql = ""
-
-    tx_query = f"""
-        SELECT 
-            transactions.date,
-            CONCAT(trucks.emirate, ' ', trucks.plate_code, ' ', trucks.plate_number) AS truck,
-            transactions.type,
-            transactions.liters
-        FROM transactions
-        JOIN trucks ON transactions.truck_id = trucks.id
-        WHERE transactions.date BETWEEN %s AND %s {truck_filter_sql}
-        ORDER BY transactions.date DESC
-    """
-    
-    tx_df = pd.read_sql_query(tx_query, conn, params=params)
-
-    tab_uplift, tab_delivery = st.tabs(["📥 Uplift Intelligence (IN)", "📤 Delivery Intelligence (OUT)"])
-
-    with tab_uplift:
-        uplift_df = tx_df[tx_df["type"] == "IN"]
-        if not uplift_df.empty:
-            grouped_up = uplift_df.groupby(["date", "truck"])["liters"].sum().reset_index().rename(columns={"liters": "Uplifted Liters"})
-            
-            # Interactive Bar Chart for Uplifts
-            fig_up = px.bar(
-                grouped_up, 
-                x="date", 
-                y="Uplifted Liters", 
-                color="truck", 
-                title="Date-Wise Fuel Uplifts by Truck",
-                barmode="stack",
-                color_discrete_sequence=px.colors.qualitative.Bold
-            )
-            fig_up.update_layout(height=320, margin=dict(l=20, r=20, t=40, b=20))
-            st.plotly_chart(fig_up, use_container_width=True)
-            
-            st.dataframe(grouped_up, use_container_width=True, hide_index=True)
-        else:
-            st.info("No uplift entries found for the selected parameters.")
-
-    with tab_delivery:
-        delivery_df = tx_df[tx_df["type"] == "OUT"]
-        if not delivery_df.empty:
-            grouped_del = delivery_df.groupby(["date", "truck"])["liters"].sum().reset_index().rename(columns={"liters": "Delivered Liters"})
-            
-            # Interactive Bar Chart for Deliveries
-            fig_del = px.bar(
-                grouped_del, 
-                x="date", 
-                y="Delivered Liters", 
-                color="truck", 
-                title="Date-Wise Fuel Deliveries by Truck",
-                barmode="stack",
-                color_discrete_sequence=px.colors.qualitative.Safe
-            )
-            fig_del.update_layout(height=320, margin=dict(l=20, r=20, t=40, b=20))
-            st.plotly_chart(fig_del, use_container_width=True)
-
-            st.dataframe(grouped_del, use_container_width=True, hide_index=True)
-        else:
-            st.info("No delivery entries found for the selected parameters.")
+    # Day-by-Day Forecast Breakdown Table
+    st.markdown(f"#### 🗓️ Day-by-Day Forecast ({forecast_days}-Day Detailed Breakdown)")
+    st.dataframe(
+        forecast_df,
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "day": st.column_config.TextColumn("Day"),
+            "date": st.column_config.DateColumn("Date"),
+            "daily_req_no_adhoc": st.column_config.NumberColumn("Daily Req. (Without Ad-hoc)", format="%.2f L"),
+            "daily_adhoc": st.column_config.NumberColumn("Ad-hoc Demand", format="%.2f L"),
+            "daily_req_with_adhoc": st.column_config.NumberColumn("Daily Req. (With Ad-hoc)", format="%.2f L"),
+            "cum_no_adhoc": st.column_config.NumberColumn("Cumulative Req. (Without Ad-hoc)", format="%.2f L"),
+            "cum_with_adhoc": st.column_config.NumberColumn("Cumulative Req. (With Ad-hoc)", format="%.2f L")
+        }
+    )
