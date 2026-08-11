@@ -22,7 +22,7 @@ def login_system(conn) -> None:
     apply_theme()
     left, centre, right = st.columns([1, 1.15, 1])
     with centre:
-        st.image("assets/fillit-logo.png", use_container_width=True)
+        st.image("assets/fillit-logo.png", width=230)
         st.markdown("### Welcome back")
         st.caption("Sign in to manage fleet fuel operations.")
         with st.form("login_form"):

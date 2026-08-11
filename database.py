@@ -1,12 +1,56 @@
 import psycopg2
 import streamlit as st
+from threading import RLock
 from security import hash_password
 
 
 @st.cache_resource(show_spinner=False)
+def _connection_manager():
+    return ConnectionManager(st.secrets["connections"]["postgresql"]["url"])
+
+
+class ConnectionManager:
+    def __init__(self, url):
+        self.url = url
+        self.connection = None
+        self.lock = RLock()
+
+    def get(self):
+        with self.lock:
+            if self.connection is None or self.connection.closed:
+                self.connection = self._connect()
+                return self.connection
+            try:
+                with self.connection.cursor() as cursor:
+                    cursor.execute("SELECT 1")
+                    cursor.fetchone()
+                return self.connection
+            except (psycopg2.InterfaceError, psycopg2.OperationalError):
+                try:
+                    self.connection.close()
+                except Exception:
+                    pass
+                self.connection = self._connect()
+                return self.connection
+            except psycopg2.Error:
+                # Recover from an earlier failed transaction before reuse.
+                self.connection.rollback()
+                return self.connection
+
+    def _connect(self):
+        return psycopg2.connect(
+            self.url,
+            connect_timeout=10,
+            application_name="fillit",
+            keepalives=1,
+            keepalives_idle=30,
+            keepalives_interval=10,
+            keepalives_count=5,
+        )
+
+
 def get_connection():
-    url = st.secrets["connections"]["postgresql"]["url"]
-    return psycopg2.connect(url, connect_timeout=10, application_name="fillit")
+    return _connection_manager().get()
 
 
 @st.cache_resource(show_spinner="Preparing FILLIT…")

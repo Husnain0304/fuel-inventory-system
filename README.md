@@ -1,4 +1,4 @@
-# FILLIT Professional
+# FILLIT Professional v2
 
 FILLIT is a Streamlit application for fleet fuel inventory, uplifts, deliveries,
 internal transfers, truck ledgers, approvals, reporting, and audit history.
@@ -6,6 +6,10 @@ internal transfers, truck ledgers, approvals, reporting, and audit history.
 ## What changed in this edition
 
 - Branded FILLIT navigation, login screen, theme, logo, and clearer page headers.
+- Official FILLIT logo and burgundy/black corporate visual system based on fillit.co.
+- Rebuilt executive dashboard with exceptions, live inventory, operational trends,
+  recent activity, and a compact reporting hierarchy.
+- Automatic database reconnection after Neon or Streamlit closes an idle session.
 - Database-verified roles; user and role values are never trusted from the URL.
 - bcrypt password hashing with automatic upgrade of legacy SHA-256 accounts.
 - Login attempt throttling and stronger password rules.
