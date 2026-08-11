@@ -295,6 +295,9 @@ def render_bulk_upload(conn, cursor, truck_dict, truck_list):
                 tx_df["truck"] = tx_df["truck_id"].map(truck_id_to_name)
                 display_df = tx_df[["id", "date", "truck", "liters", "ticket_number"]].copy()
 
+                # Fix for StreamlitAPIException: convert date column to pandas datetime64
+                display_df["date"] = pd.to_datetime(display_df["date"])
+
                 edited_tx = st.data_editor(
                     display_df,
                     key=f"file_tx_editor_{sel_file_id}",
@@ -322,11 +325,13 @@ def render_bulk_upload(conn, cursor, truck_dict, truck_list):
                         for _, row in edited_tx.iterrows():
                             if pd.notna(row["id"]):
                                 t_id = truck_dict.get(row["truck"])
+                                # Format date back to string for database update
+                                date_str = pd.to_datetime(row["date"]).strftime("%Y-%m-%d") if pd.notna(row["date"]) else str(row["date"])
                                 cursor.execute("""
                                     UPDATE transactions 
                                     SET date = %s, truck_id = %s, liters = %s, ticket_number = %s
                                     WHERE id = %s
-                                """, (str(row["date"]), t_id, row["liters"], str(row["ticket_number"]), int(row["id"])))
+                                """, (date_str, t_id, row["liters"], str(row["ticket_number"]), int(row["id"])))
 
                         conn.commit()
                         st.success("Transactions updated successfully!")
