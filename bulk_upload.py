@@ -5,25 +5,7 @@ import re
 def render_bulk_upload(conn, cursor, truck_dict, truck_list):
     st.title("📥 Bulk Delivery Upload & File Management")
 
-    # -------------------------------------------------------------
-    # DB SCHEMA INITIALIZATION & MIGRATIONS
-    # -------------------------------------------------------------
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS uploaded_files (
-            id SERIAL PRIMARY KEY,
-            file_name VARCHAR(255) UNIQUE,
-            uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        );
-    """)
-
-    cursor.execute("""
-        ALTER TABLE transactions 
-        ADD COLUMN IF NOT EXISTS ticket_number TEXT,
-        ADD COLUMN IF NOT EXISTS file_id INTEGER REFERENCES uploaded_files(id) ON DELETE CASCADE;
-    """)
-    conn.commit()
-
-    # Create reverse dictionary for truck ID to Name lookups
+    # Reverse lookup map for truck ID to Name
     truck_id_to_name = {v: k for k, v in truck_dict.items()}
 
     # Session State Management
@@ -36,7 +18,7 @@ def render_bulk_upload(conn, cursor, truck_dict, truck_list):
     if "upload_success_msg" not in st.session_state:
         st.session_state["upload_success_msg"] = None
 
-    # Persistent Success Banner (Displays post rerun)
+    # Persistent Success Banner
     if st.session_state["upload_success_msg"]:
         st.success(st.session_state["upload_success_msg"])
         st.session_state["upload_success_msg"] = None
@@ -67,13 +49,12 @@ def render_bulk_upload(conn, cursor, truck_dict, truck_list):
             cursor.execute("SELECT uploaded_at FROM uploaded_files WHERE file_name = %s", (file_name,))
             duplicate_row = cursor.fetchone()
 
-            bypass_upload = False
-            if duplicate_row:
+            if duplicate_row and st.session_state["staged_filename"] != file_name:
                 upload_time = duplicate_row[0]
                 st.error(f"⚠️ **Duplicate File Detected!**\n\nThe file **'{file_name}'** was already imported on `{upload_time}`.")
                 bypass_upload = st.checkbox("🔄 Force re-upload/re-stage this file anyway.")
                 if not bypass_upload:
-                    st.warning("Please rename your file, or check the box above to force parsing.")
+                    st.warning("Please rename your file, or delete the existing file record under 'File History & Management'.")
                     return
 
             # Parse File into Session State Staging Area
@@ -100,7 +81,7 @@ def render_bulk_upload(conn, cursor, truck_dict, truck_list):
                     if "ticket_number" not in raw_df.columns:
                         raw_df["ticket_number"] = ""
 
-                    # Clean & convert data types
+                    # Clean data types safely
                     raw_df['date'] = raw_df['date'].astype(str).str.strip()
                     raw_df['truck'] = raw_df['truck'].astype(str).str.strip()
                     raw_df['liters'] = pd.to_numeric(raw_df['liters'], errors='coerce').fillna(0.0)
@@ -123,7 +104,7 @@ def render_bulk_upload(conn, cursor, truck_dict, truck_list):
                 num_rows="dynamic",
                 use_container_width=True,
                 column_config={
-                    "date": st.column_config.TextColumn("Date (DD-MM-YYYY or YYYY-MM-DD)", required=True),
+                    "date": st.column_config.TextColumn("Date (DD-MM-YYYY)", required=True),
                     "truck": st.column_config.TextColumn("Truck Number / Plate", required=True),
                     "liters": st.column_config.NumberColumn("Liters (Fuel Out)", min_value=0.01, format="%.2f L", required=True),
                     "ticket_number": st.column_config.TextColumn("Ticket Number", required=False)
@@ -132,7 +113,6 @@ def render_bulk_upload(conn, cursor, truck_dict, truck_list):
             )
 
             st.session_state["staged_df"] = edited_df
-
             col_confirm, col_discard = st.columns([2, 1])
 
             if col_discard.button("🗑️ Discard Uploaded File", use_container_width=True):
@@ -147,110 +127,115 @@ def render_bulk_upload(conn, cursor, truck_dict, truck_list):
                     st.error("❌ No data rows available to import!")
                     return
 
-                added_records = []
-                skipped_records = []
                 error_records = []
+                parsed_rows = []
 
                 pattern_with_code = re.compile(r'^[A-Z]{3}\s[A-Z0-9]{1,2}\s\d{1,5}$')
                 pattern_no_code = re.compile(r'^[A-Z]{3}\s\d{1,5}$')
                 pattern_serial = re.compile(r'^\d{1,5}$')
 
-                # Register File in uploaded_files table
-                cursor.execute("""
-                    INSERT INTO uploaded_files (file_name) VALUES (%s)
-                    ON CONFLICT (file_name) DO UPDATE SET uploaded_at = CURRENT_TIMESTAMP
-                    RETURNING id;
-                """, (st.session_state["staged_filename"],))
-                file_id = cursor.fetchone()[0]
-
+                # Validate rows in memory before modifying DB state
                 for index, row in edited_df.iterrows():
                     row_num = index + 2
                     raw_date = str(row['date']).strip()
-                    raw_truck = str(row['truck']).strip()
+                    raw_truck = str(row['truck']).strip().upper()
                     raw_liters = row['liters']
                     raw_ticket = str(row['ticket_number']).strip() if pd.notna(row['ticket_number']) else ""
 
-                    errors = []
+                    row_errors = []
 
-                    # Parse Date
+                    # Parse Date safely
                     parsed_date = None
                     try:
-                        parsed_date = pd.to_datetime(raw_date, format="%d-%m-%Y").date()
+                        parsed_date = pd.to_datetime(raw_date, dayfirst=True).date()
                     except Exception:
-                        try:
-                            parsed_date = pd.to_datetime(raw_date).date()
-                        except Exception:
-                            errors.append("Invalid date format (Use DD-MM-YYYY)")
+                        row_errors.append("Invalid date format (Use DD-MM-YYYY)")
 
                     # Parse Liters
                     try:
                         liters_val = float(raw_liters)
                         if liters_val <= 0:
-                            errors.append("Liters must be > 0")
+                            row_errors.append("Liters must be > 0")
                     except (ValueError, TypeError):
-                        errors.append("Liters must be numeric")
+                        row_errors.append("Liters must be numeric")
 
-                    # Truck Check
-                    is_valid_format = "gen" in raw_truck.lower() or pattern_with_code.match(raw_truck) or pattern_no_code.match(raw_truck) or pattern_serial.match(raw_truck)
-                    if raw_truck not in truck_dict:
-                        errors.append(f"Truck '{raw_truck}' not registered")
+                    # Truck Verification
+                    is_valid_format = "GEN" in raw_truck or pattern_with_code.match(raw_truck) or pattern_no_code.match(raw_truck) or pattern_serial.match(raw_truck)
+                    
+                    matched_truck_id = next((v for k, v in truck_dict.items() if k.upper() == raw_truck), None)
+
+                    if not matched_truck_id:
+                        row_errors.append(f"Truck '{raw_truck}' not registered")
                     elif not is_valid_format:
-                        errors.append(f"Format mismatch in '{raw_truck}'")
+                        row_errors.append(f"Format mismatch in '{raw_truck}'")
 
-                    if errors:
+                    if row_errors:
                         error_records.append({
                             "Row": row_num, "Truck": raw_truck, "Date": raw_date,
-                            "Liters": raw_liters, "Ticket No": raw_ticket, "Reason": " | ".join(errors)
-                        })
-                        continue
-
-                    # Duplicate Transaction Check
-                    truck_id = truck_dict[raw_truck]
-                    cursor.execute("""
-                        SELECT id FROM transactions 
-                        WHERE truck_id = %s AND date = %s AND liters = %s AND type = 'OUT'
-                          AND (ticket_number = %s OR (ticket_number IS NULL AND %s = ''))
-                    """, (truck_id, str(parsed_date), liters_val, raw_ticket, raw_ticket))
-                    dup_check = cursor.fetchone()
-
-                    if dup_check:
-                        skipped_records.append({
-                            "Row": row_num, "Truck": raw_truck, "Date": str(parsed_date),
-                            "Liters": f"{liters_val:,.2f} L", "Ticket No": raw_ticket, "Reason": "Duplicate transaction"
+                            "Liters": raw_liters, "Ticket No": raw_ticket, "Reason": " | ".join(row_errors)
                         })
                     else:
+                        parsed_rows.append({
+                            "row_num": row_num, "truck_id": matched_truck_id, "truck_name": raw_truck,
+                            "date": str(parsed_date), "liters": liters_val, "ticket": raw_ticket
+                        })
+
+                if error_records:
+                    st.error(f"🚨 **Formatting Errors Found ({len(error_records)}):** Import stopped.")
+                    st.dataframe(pd.DataFrame(error_records), use_container_width=True, hide_index=True)
+                    return
+
+                # Database Execution Phase (Atomic Transaction)
+                try:
+                    cursor.execute("""
+                        INSERT INTO uploaded_files (file_name) VALUES (%s)
+                        ON CONFLICT (file_name) DO UPDATE SET uploaded_at = CURRENT_TIMESTAMP
+                        RETURNING id;
+                    """, (st.session_state["staged_filename"],))
+                    file_id = cursor.fetchone()[0]
+
+                    added_records = []
+                    skipped_records = []
+
+                    for item in parsed_rows:
                         cursor.execute("""
-                            INSERT INTO transactions (truck_id, date, liters, type, ticket_number, file_id) 
-                            VALUES (%s, %s, %s, 'OUT', %s, %s) RETURNING id
-                        """, (truck_id, str(parsed_date), liters_val, raw_ticket, file_id))
+                            SELECT id FROM transactions 
+                            WHERE truck_id = %s AND date = %s AND liters = %s AND type = 'OUT'
+                              AND (ticket_number = %s OR (ticket_number IS NULL AND %s = ''))
+                        """, (item["truck_id"], item["date"], item["liters"], item["ticket"], item["ticket"]))
                         
-                        last_id = cursor.fetchone()[0]
-                        added_records.append({"id": last_id, "Liters": liters_val})
+                        if cursor.fetchone():
+                            skipped_records.append({
+                                "Row": item["row_num"], "Truck": item["truck_name"], "Date": item["date"],
+                                "Liters": f"{item['liters']:,.2f} L", "Ticket No": item["ticket"], "Reason": "Duplicate transaction"
+                            })
+                        else:
+                            cursor.execute("""
+                                INSERT INTO transactions (truck_id, date, liters, type, ticket_number, file_id) 
+                                VALUES (%s, %s, %s, 'OUT', %s, %s) RETURNING id
+                            """, (item["truck_id"], item["date"], item["liters"], item["ticket"], file_id))
+                            added_records.append(item["liters"])
 
-                if added_records:
                     conn.commit()
-                    total_liters = sum([r["Liters"] for r in added_records])
-                    
-                    st.session_state["upload_success_msg"] = (
-                        f"🎉 **Import Successful!** Processed `{st.session_state['staged_filename']}` — "
-                        f"**{len(added_records)}** transactions added (**{total_liters:,.2f} L** total)."
-                    )
 
-                    # Reset Staging Area
-                    st.session_state["staged_df"] = None
-                    st.session_state["staged_filename"] = ""
-                    st.session_state["uploader_key"] += 1
-                    st.rerun()
+                    if added_records:
+                        total_liters = sum(added_records)
+                        st.session_state["upload_success_msg"] = (
+                            f"🎉 **Import Successful!** Processed `{st.session_state['staged_filename']}` — "
+                            f"**{len(added_records)}** transactions added (**{total_liters:,.2f} L** total)."
+                        )
+                        st.session_state["staged_df"] = None
+                        st.session_state["staged_filename"] = ""
+                        st.session_state["uploader_key"] += 1
+                        st.rerun()
 
-                elif skipped_records or error_records:
-                    conn.rollback()
-                    st.error("❌ **Upload Failed!** No records were imported.")
-                    if skipped_records:
-                        st.warning(f"ℹ️ **Skipped Duplicates ({len(skipped_records)}):**")
+                    elif skipped_records:
+                        st.warning(f"ℹ️ **All records were duplicates ({len(skipped_records)} skipped):**")
                         st.dataframe(pd.DataFrame(skipped_records), use_container_width=True, hide_index=True)
-                    if error_records:
-                        st.error(f"🚨 **Formatting Errors ({len(error_records)}):**")
-                        st.dataframe(pd.DataFrame(error_records), use_container_width=True, hide_index=True)
+
+                except Exception as e:
+                    conn.rollback()
+                    st.error(f"❌ **Database Import Failed:** {str(e)}")
 
     # =============================================================
     # TAB 2: FILE HISTORY & FILE-WISE TRANSACTIONS
@@ -294,7 +279,6 @@ def render_bulk_upload(conn, cursor, truck_dict, truck_list):
             st.markdown("---")
             st.write(f"### 📄 Transactions in `{selected_file}`")
 
-            # Fetch file transactions
             cursor.execute("""
                 SELECT id, date, truck_id, liters, ticket_number 
                 FROM transactions 
@@ -366,14 +350,14 @@ def render_bulk_upload(conn, cursor, truck_dict, truck_list):
     with tab_search:
         st.subheader("🔍 Advanced Transaction Search")
 
+        # Safely query files directory specifically for search tab dropdown
+        cursor.execute("SELECT file_name FROM uploaded_files ORDER BY file_name ASC;")
+        db_files = [r[0] for r in cursor.fetchall()]
+
         col_s1, col_s2, col_s3 = st.columns(3)
         search_ticket = col_s1.text_input("Search Ticket Number", placeholder="e.g. T-10293")
         search_truck = col_s2.selectbox("Filter by Truck", ["All Trucks"] + truck_list)
-        
-        file_options = ["All Files"]
-        if 'files_df' in locals() and not files_df.empty:
-            file_options += files_df["file_name"].tolist()
-        search_file = col_s3.selectbox("Filter by Source File", file_options)
+        search_file = col_s3.selectbox("Filter by Source File", ["All Files"] + db_files)
 
         col_d1, col_d2, col_l1, col_l2 = st.columns(4)
         start_date = col_d1.date_input("Start Date", value=None)
@@ -381,7 +365,6 @@ def render_bulk_upload(conn, cursor, truck_dict, truck_list):
         min_liters = col_l1.number_input("Min Liters", min_value=0.0, value=0.0)
         max_liters = col_l2.number_input("Max Liters", min_value=0.0, value=0.0)
 
-        # Dynamic Query Construction
         query = """
             SELECT 
                 t.id, 
@@ -426,11 +409,9 @@ def render_bulk_upload(conn, cursor, truck_dict, truck_list):
 
         query += " ORDER BY t.date DESC, t.id DESC LIMIT 500;"
 
-        # Execute query safely with psycopg2 cursor
         cursor.execute(query, tuple(params))
         rows = cursor.fetchall()
         colnames = [desc[0] for desc in cursor.description]
-        
         results_df = pd.DataFrame(rows, columns=colnames)
 
         if not results_df.empty:
