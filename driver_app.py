@@ -2,6 +2,8 @@ import streamlit as st
 import psycopg2
 import pandas as pd
 from datetime import datetime
+import bcrypt
+import hmac
 
 # Set page configuration
 st.set_page_config(page_title="Driver Fuel Log", layout="centered")
@@ -12,7 +14,11 @@ GAL_TO_LITERS = 4.54609
 
 # --- DATABASE CONNECTION ---
 def get_connection():
-    return psycopg2.connect(st.secrets["postgres"]["url"])
+    try:
+        url = st.secrets["connections"]["postgresql"]["url"]
+    except KeyError:
+        url = st.secrets["postgres"]["url"]
+    return psycopg2.connect(url, connect_timeout=10, application_name="fillit-driver")
 
 def get_trucks(conn):
     df = pd.read_sql_query("""
@@ -55,13 +61,12 @@ if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
     st.session_state.driver_name = ""
 
-# --- REFRESH PERSISTENCE (Query Parameters) ---
-query_params = st.query_params
-if "user" in query_params and not st.session_state.logged_in:
-    saved_user = query_params["user"]
-    if saved_user in DRIVERS:
-        st.session_state.logged_in = True
-        st.session_state.driver_name = DRIVERS[saved_user]["name"]
+def valid_driver_password(password, account):
+    stored = str(account.get("password_hash", ""))
+    if stored.startswith(("$2a$", "$2b$", "$2y$")):
+        return bcrypt.checkpw(password.encode("utf-8"), stored.encode("utf-8"))
+    # Compatibility only. Replace legacy `password` entries with bcrypt hashes.
+    return hmac.compare_digest(str(account.get("password", "")), password)
 
 # Initialize synced conversion states
 if "liters_val" not in st.session_state:
@@ -108,10 +113,9 @@ if not st.session_state.logged_in:
     password = st.text_input("Password", type="password", placeholder="Enter your password")
     
     if st.button("LOG IN", type="primary", use_container_width=True):
-        if username in DRIVERS and DRIVERS[username]["password"] == password:
+        if username in DRIVERS and valid_driver_password(password, DRIVERS[username]):
             st.session_state.logged_in = True
             st.session_state.driver_name = DRIVERS[username]["name"]
-            st.query_params["user"] = username
             st.rerun()
         else:
             st.error("❌ Incorrect username or password. Please try again.")

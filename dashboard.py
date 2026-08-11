@@ -13,13 +13,6 @@ def render_dashboard(conn, truck_dict, truck_list):
     # Fetch cursor for direct SQL queries
     cursor = conn.cursor()
 
-    # Ensure supplier column exists on transactions table for safety
-    cursor.execute("""
-        ALTER TABLE transactions 
-        ADD COLUMN IF NOT EXISTS supplier TEXT;
-    """)
-    conn.commit()
-
     # =========================================================================
     # SECTION 1: LIVE TRUCK INVENTORY & SIMPLE BALANCE LOOKUP
     # =========================================================================

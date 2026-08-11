@@ -4,32 +4,8 @@ from datetime import datetime
 import io  # Required for in-memory Excel file generation
 
 def auto_setup_db(cursor, conn):
-    # 1. Ensure audit_log table exists
-    cursor.execute("""
-    CREATE TABLE IF NOT EXISTS audit_log (
-        id SERIAL PRIMARY KEY,
-        "user" TEXT,
-        action TEXT,
-        timestamp TEXT
-    )
-    """)
-    
-    # 2. Ensure suppliers table exists
-    cursor.execute("""
-    CREATE TABLE IF NOT EXISTS suppliers (
-        id SERIAL PRIMARY KEY,
-        name TEXT UNIQUE NOT NULL
-    )
-    """)
-    
-    # 3. Ensure a default supplier exists
+    # Schema migrations are centralized and cached in database.init_db.
     cursor.execute("INSERT INTO suppliers (name) VALUES ('Default Supplier') ON CONFLICT (name) DO NOTHING")
-    
-    # 4. Safely add missing columns
-    cursor.execute("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS supplier_id INTEGER REFERENCES suppliers(id);")
-    cursor.execute("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS transfer_partner_id INTEGER;")
-    cursor.execute("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS created_by TEXT;")
-    
     conn.commit()
 
 def log_action(cursor, conn, action_text):
@@ -588,7 +564,7 @@ def render_transactions(conn, cursor, truck_dict, truck_list):
     # ==========================================
     with tab5:
         st.subheader("📋 Complete System Activity History")
-        logs_df = pd.read_sql_query('SELECT timestamp AS "Date & Time", "user" AS "User", action AS "Action" FROM audit_log ORDER BY id DESC', conn)
+        logs_df = pd.read_sql_query('SELECT timestamp AS "Date & Time", "user" AS "User", action AS "Action" FROM audit_log ORDER BY id DESC LIMIT 500', conn)
         if logs_df.empty:
             st.info("No actions logged.")
         else:

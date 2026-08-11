@@ -1,54 +1,80 @@
+import time
+
 import streamlit as st
-import hashlib
+
+from security import hash_password, verify_password
+from ui import apply_theme
 
 
-def hash_password(password):
-    return hashlib.sha256(password.encode()).hexdigest()
+MAX_ATTEMPTS = 5
+LOCK_SECONDS = 60
 
 
-def ensure_default_admin(conn):
-    cursor = conn.cursor()
-    # Safe check: Count how many users exist in the table
-    cursor.execute("SELECT COUNT(*) FROM users")
-    user_count = cursor.fetchone()[0]
-    
-    # Only create the default admin if the table is completely empty
-    if user_count == 0:
-        cursor.execute(
-            "INSERT INTO users (username, password, role) VALUES (%s, %s, %s)",
-            ("admin", hash_password("admin123"), "ADMIN")
-        )
-        conn.commit()
+def _login_allowed() -> bool:
+    locked_until = st.session_state.get("login_locked_until", 0)
+    if locked_until > time.time():
+        st.error(f"Too many attempts. Try again in {int(locked_until - time.time()) + 1} seconds.")
+        return False
+    return True
 
 
-def login_system(conn):
-    st.title("Login")
+def login_system(conn) -> None:
+    apply_theme()
+    left, centre, right = st.columns([1, 1.15, 1])
+    with centre:
+        st.image("assets/fillit-logo.png", use_container_width=True)
+        st.markdown("### Welcome back")
+        st.caption("Sign in to manage fleet fuel operations.")
+        with st.form("login_form"):
+            username = st.text_input("Username").strip()
+            password = st.text_input("Password", type="password")
+            submitted = st.form_submit_button("Sign in", type="primary", use_container_width=True)
 
-    with st.form("login_form"):
-        username = st.text_input("Username")
-        password = st.text_input("Password", type="password")
-        submitted = st.form_submit_button("Login")
-
-        if submitted:
+        if submitted and _login_allowed():
             cursor = conn.cursor()
-            cursor.execute(
-                "SELECT password, role FROM users WHERE username = %s",
-                (username,)
-            )
+            cursor.execute("SELECT id, username, password, role FROM users WHERE LOWER(username)=LOWER(%s)", (username,))
             result = cursor.fetchone()
-
-            if result and result[0] == hash_password(password):
-                st.session_state["user"] = username
-                st.session_state["role"] = result[1]
-                st.success("Login successful ✅")
+            valid, needs_upgrade = verify_password(password, result[2]) if result else (False, False)
+            if valid:
+                if needs_upgrade:
+                    cursor.execute("UPDATE users SET password=%s WHERE id=%s", (hash_password(password), result[0]))
+                    conn.commit()
+                st.session_state["user_id"] = result[0]
+                st.session_state["user"] = result[1]
+                st.session_state["role"] = result[3]
+                st.session_state["login_attempts"] = 0
                 st.rerun()
             else:
-                st.error("Invalid username or password")
+                attempts = st.session_state.get("login_attempts", 0) + 1
+                st.session_state["login_attempts"] = attempts
+                if attempts >= MAX_ATTEMPTS:
+                    st.session_state["login_locked_until"] = time.time() + LOCK_SECONDS
+                    st.session_state["login_attempts"] = 0
+                st.error("The username or password is incorrect.")
 
 
-def require_login(conn):
-    ensure_default_admin(conn)
+def require_login(conn) -> None:
+    user_id = st.session_state.get("user_id")
+    if user_id:
+        cursor = conn.cursor()
+        cursor.execute("SELECT username, role FROM users WHERE id=%s", (user_id,))
+        current = cursor.fetchone()
+        if current:
+            st.session_state["user"], st.session_state["role"] = current
+            return
+    for key in ("user_id", "user", "role"):
+        st.session_state.pop(key, None)
+    login_system(conn)
+    st.stop()
 
-    if "user" not in st.session_state:
-        login_system(conn)
+
+def require_role(*roles: str) -> None:
+    if st.session_state.get("role") not in roles:
+        st.error("You do not have permission to view this page.")
         st.stop()
+
+
+def logout() -> None:
+    st.session_state.clear()
+    st.query_params.clear()
+    st.rerun()

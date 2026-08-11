@@ -1,119 +1,92 @@
-import streamlit as st
 import pandas as pd
-from database import get_connection, init_db
-from dashboard import render_dashboard
-from transactions import render_transactions
-from reports import render_reports
-from ledger import render_ledger
-from settings import render_settings
-from trucks import render_trucks
+import streamlit as st
+
+from auth import logout, require_login, require_role
 from bulk_upload import render_bulk_upload
-from auth import require_login
-# ---> STEP 1: IMPORT YOUR NEW USER MANAGEMENT FUNCTION
+from dashboard import render_dashboard
+from database import get_connection, init_db
+from ledger import render_ledger
+from reports import render_reports
+from settings import render_settings
+from transactions import render_transactions
+from trucks import render_trucks
+from ui import apply_theme, page_header, render_sidebar_brand
 from users_admin import render_user_management
 
-st.set_page_config(page_title="FILLIT", layout="wide")
 
-# ==========================================
-# 🔄 PERSISTENCE ENGINE: RESTORE SESSION ON REFRESH
-# ==========================================
-# If session_state was cleared by a refresh, but URL parameters exist, restore them
-if "user" not in st.session_state and "user" in st.query_params:
-    st.session_state["user"] = st.query_params["user"]
-if "role" not in st.session_state and "role" in st.query_params:
-    st.session_state["role"] = st.query_params["role"]
+st.set_page_config(page_title="FILLIT | Fleet Fuel Control", page_icon="⛽", layout="wide", initial_sidebar_state="expanded")
+apply_theme()
 
-# Connect to Neon
 conn = get_connection()
 init_db(conn)
-
-# Require user login before loading the rest of the application
 require_login(conn)
 
-# Save login states to URL immediately after successful login
-if "user" in st.session_state:
-    st.query_params["user"] = st.session_state["user"]
-if "role" in st.session_state:
-    st.query_params["role"] = st.session_state["role"]
+render_sidebar_brand()
 
-st.markdown("<h1 style='text-align:center;color:#c41e3a;'>FILLIT</h1>", unsafe_allow_html=True)
-st.markdown(f"Logged in as: {st.session_state['user']} ({st.session_state['role']})")
-st.markdown("<hr>", unsafe_allow_html=True)
-
-# ---> STEP 2: DEFINE THE MENU OPTIONS
-menu_options = [
-    "📊 Dashboard",
-    "🔄 Transactions",
-    "🚛 Manage Trucks",
-    "📅 Reports",
-    "📘 Ledger",
-    "📤 Bulk Delivery Upload",
-    "✅ Refill Approvals",
-    "📜 Audit Log",
-    "⚙️ Settings"
-]
-
-# Check for uppercase "ADMIN" to match your auth.py role
+menu = {
+    "Overview": "Dashboard",
+    "Fuel Operations": "Transactions",
+    "Fleet": "Manage Trucks",
+    "Insights": "Reports",
+    "Truck Ledger": "Ledger",
+    "Import Data": "Bulk Upload",
+    "Approvals": "Refill Approvals",
+    "Activity": "Audit Log",
+    "Configuration": "Settings",
+}
 if st.session_state.get("role") == "ADMIN":
-    menu_options.append("👥 Manage Users")
+    menu["User Access"] = "Manage Users"
 
-# Determine which page should be selected by default from URL parameters
-default_index = 0
-if "page" in st.query_params and st.query_params["page"] in menu_options:
-    default_index = menu_options.index(st.query_params["page"])
+labels = list(menu)
+requested = st.query_params.get("page", labels[0])
+default_index = labels.index(requested) if requested in labels else 0
+selected = st.sidebar.radio("WORKSPACE", labels, index=default_index)
+st.query_params["page"] = selected
+page = menu[selected]
 
-# Render navigation and save choice to URL instantly when clicked
-page = st.sidebar.radio("Navigation", menu_options, index=default_index)
-st.query_params["page"] = page
+st.sidebar.divider()
+st.sidebar.caption(f"Signed in as {st.session_state['user']} · {st.session_state['role'].title()}")
+if st.sidebar.button("Sign out", use_container_width=True):
+    logout()
 
-# ---> ADD LOG OUT BUTTON TO THE SIDEBAR
-st.sidebar.markdown("---")
-if st.sidebar.button("🚪 Log Out", use_container_width=True):
-    # Clear session state
-    for key in list(st.session_state.keys()):
-        del st.session_state[key]
-    # Clear URL parameters completely on logout
-    st.query_params.clear()
-    st.rerun()
-
-# Use standard database cursor to query the trucks list
 cursor = conn.cursor()
-cursor.execute("SELECT id, emirate, plate_code, plate_number FROM trucks")
-result = cursor.fetchall()
-    
-truck_dict = {f"{t[1]} {t[2]} {t[3]}": t[0] for t in result}
-truck_list = list(truck_dict.keys())
+cursor.execute("SELECT id, emirate, plate_code, plate_number FROM trucks ORDER BY emirate, plate_code, plate_number")
+truck_rows = cursor.fetchall()
+truck_dict = {f"{row[1]} {row[2]} {row[3]}": row[0] for row in truck_rows}
+truck_list = list(truck_dict)
 
-# ---> STEP 3: ROUTE THE NAVIGATION SELECTIONS
-if page == "📊 Dashboard":
+if page == "Dashboard":
     render_dashboard(conn, truck_dict, truck_list)
-
-elif page == "🔄 Transactions":
+elif page == "Transactions":
     render_transactions(conn, cursor, truck_dict, truck_list)
-
-elif page == "🚛 Manage Trucks":
+elif page == "Manage Trucks":
+    page_header("Fleet", "Register vehicles and manage truck-level pricing.")
     render_trucks(conn, cursor)
-
-elif page == "📅 Reports":
+elif page == "Reports":
+    page_header("Reports", "Review fuel movement, cost, and operational performance.")
     render_reports(conn, truck_dict, truck_list)
-
-elif page == "📘 Ledger":
+elif page == "Ledger":
+    page_header("Truck Ledger", "Trace balances and movements by vehicle.")
     render_ledger(conn, truck_dict, truck_list)
-
-elif page == "📤 Bulk Delivery Upload":
+elif page == "Bulk Upload":
+    page_header("Import Data", "Validate and import delivery records from Excel.")
     render_bulk_upload(conn, cursor, truck_dict, truck_list)
-
-elif page == "✅ Refill Approvals":
+elif page == "Refill Approvals":
     from approvals import render_approvals
     render_approvals(conn, cursor)
-
-elif page == "📜 Audit Log":
-    df = pd.read_sql_query("SELECT * FROM audit_log ORDER BY id DESC", conn)
-    st.dataframe(df)
-
-elif page == "⚙️ Settings":
+elif page == "Audit Log":
+    page_header("Activity", "Review the latest recorded system actions.")
+    limit = st.selectbox("Rows to display", [100, 250, 500], index=0)
+    log_df = pd.read_sql_query(
+        'SELECT timestamp AS "Date & Time", "user" AS "User", action AS "Action" '
+        "FROM audit_log ORDER BY id DESC LIMIT %s", conn, params=[limit]
+    )
+    st.dataframe(log_df, use_container_width=True, hide_index=True)
+elif page == "Settings":
+    require_role("ADMIN")
+    page_header("Configuration", "Manage global pricing and stock thresholds.")
     render_settings(conn, cursor)
-
-# Route selection to your new file
-elif page == "👥 Manage Users":
+elif page == "Manage Users":
+    require_role("ADMIN")
+    page_header("User Access", "Create accounts and control application permissions.")
     render_user_management(conn, cursor)

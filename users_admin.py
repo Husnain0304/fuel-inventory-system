@@ -1,10 +1,6 @@
 import streamlit as st
-import hashlib
 import pandas as pd
-
-# Uses your exact hashing method from auth.py
-def hash_password(password: str) -> str:
-    return hashlib.sha256(password.encode()).hexdigest()
+from security import hash_password, validate_password, validate_username
 
 def render_user_management(conn, cursor):
     st.title("👤 User Credentials Management")
@@ -23,8 +19,9 @@ def render_user_management(conn, cursor):
         submit_btn = st.form_submit_button("Create User")
         
         if submit_btn:
-            if not new_username or not new_password:
-                st.error("Both username and password are required!")
+            validation_error = validate_username(new_username) or validate_password(new_password)
+            if validation_error:
+                st.error(validation_error)
             else:
                 try:
                     hashed_pw = hash_password(new_password)
@@ -61,8 +58,11 @@ def render_user_management(conn, cursor):
             update_btn = st.form_submit_button("Save Changes")
             
             if update_btn:
-                if not edit_username:
-                    st.error("Username cannot be empty!")
+                validation_error = validate_username(edit_username)
+                if edit_password.strip():
+                    validation_error = validation_error or validate_password(edit_password)
+                if validation_error:
+                    st.error(validation_error)
                 else:
                     try:
                         if edit_password.strip():
