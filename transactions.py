@@ -27,6 +27,143 @@ def get_balance(conn, truck_id):
     """, conn, params=[truck_id])
     return df.iloc[0, 0] or 0
 
+
+def create_safe_transfer(conn, source_id, dest_id, transfer_date, liters, user):
+    """Create and verify both sides of a transfer in one database transaction."""
+    cursor = conn.cursor()
+    try:
+        cursor.execute(
+            "SELECT id FROM trucks WHERE id = ANY(%s) ORDER BY id FOR UPDATE",
+            (sorted([source_id, dest_id]),),
+        )
+        if len(cursor.fetchall()) != 2:
+            raise ValueError("One of the selected trucks no longer exists.")
+
+        cursor.execute(
+            """
+            SELECT COALESCE(SUM(CASE WHEN type='IN' THEN liters ELSE -liters END), 0)
+            FROM transactions WHERE truck_id=%s
+            """,
+            (source_id,),
+        )
+        source_balance = float(cursor.fetchone()[0] or 0)
+        if liters <= 0:
+            raise ValueError("Transfer quantity must be greater than zero.")
+        if liters > source_balance:
+            raise ValueError(f"Insufficient source balance. Available: {source_balance:,.2f} L.")
+
+        cursor.execute(
+            """
+            INSERT INTO transactions (truck_id, date, liters, type, created_by)
+            VALUES (%s, %s, %s, 'OUT', %s) RETURNING id
+            """,
+            (source_id, str(transfer_date), liters, user),
+        )
+        out_id = cursor.fetchone()[0]
+        cursor.execute(
+            """
+            INSERT INTO transactions (truck_id, date, liters, type, created_by)
+            VALUES (%s, %s, %s, 'IN', %s) RETURNING id
+            """,
+            (dest_id, str(transfer_date), liters, user),
+        )
+        in_id = cursor.fetchone()[0]
+        cursor.execute("UPDATE transactions SET transfer_partner_id=%s WHERE id=%s", (in_id, out_id))
+        cursor.execute("UPDATE transactions SET transfer_partner_id=%s WHERE id=%s", (out_id, in_id))
+
+        cursor.execute(
+            """
+            SELECT id, truck_id, liters, type, transfer_partner_id
+            FROM transactions WHERE id IN (%s, %s)
+            """,
+            (out_id, in_id),
+        )
+        rows = {row[0]: row for row in cursor.fetchall()}
+        out_row, in_row = rows.get(out_id), rows.get(in_id)
+        valid_out = out_row and out_row[1] == source_id and out_row[3] == "OUT" and out_row[4] == in_id
+        valid_in = in_row and in_row[1] == dest_id and in_row[3] == "IN" and in_row[4] == out_id
+        valid_qty = out_row and in_row and abs(float(out_row[2]) - liters) < 0.001 and abs(float(in_row[2]) - liters) < 0.001
+        if not (valid_out and valid_in and valid_qty):
+            raise ValueError("Transfer-pair verification failed. Nothing was saved.")
+
+        cursor.execute(
+            'INSERT INTO audit_log ("user", action, timestamp) VALUES (%s, %s, CURRENT_TIMESTAMP)',
+            (user, f"TRANSFERRED {liters:,.2f} L: TX-{out_id} OUT linked to TX-{in_id} IN"),
+        )
+        conn.commit()
+        return out_id, in_id, source_balance - liters
+    except Exception:
+        conn.rollback()
+        raise
+
+
+def get_transfer_integrity_issues(conn):
+    """Return broken or inconsistent transfer links without changing any data."""
+    return pd.read_sql_query(
+        """
+        SELECT t.id AS transaction_id,
+               t.transfer_partner_id AS expected_partner_id,
+               t.type,
+               t.liters,
+               CASE
+                   WHEN p.id IS NULL THEN 'Partner record is missing'
+                   WHEN p.transfer_partner_id IS DISTINCT FROM t.id THEN 'Partner link is not reciprocal'
+                   WHEN p.type = t.type THEN 'Both records have the same type'
+                   WHEN ABS(p.liters - t.liters) > 0.001 THEN 'Transfer quantities do not match'
+                   WHEN p.truck_id = t.truck_id THEN 'Source and destination are the same truck'
+                   ELSE 'Unknown issue'
+               END AS issue
+        FROM transactions t
+        LEFT JOIN transactions p ON p.id = t.transfer_partner_id
+        WHERE t.transfer_partner_id IS NOT NULL
+          AND (
+              p.id IS NULL
+              OR p.transfer_partner_id IS DISTINCT FROM t.id
+              OR p.type = t.type
+              OR ABS(p.liters - t.liters) > 0.001
+              OR p.truck_id = t.truck_id
+          )
+        ORDER BY t.id DESC
+        """,
+        conn,
+    )
+
+
+def delete_transaction_safely(conn, transaction_id, user):
+    """Delete a normal transaction, or both verified sides of a transfer, atomically."""
+    cursor = conn.cursor()
+    try:
+        cursor.execute(
+            "SELECT id, transfer_partner_id FROM transactions WHERE id=%s FOR UPDATE",
+            (transaction_id,),
+        )
+        row = cursor.fetchone()
+        if not row:
+            raise ValueError("This transaction no longer exists.")
+
+        partner_id = row[1]
+        ids_to_delete = [transaction_id]
+        if partner_id:
+            cursor.execute(
+                "SELECT id, transfer_partner_id FROM transactions WHERE id=%s FOR UPDATE",
+                (partner_id,),
+            )
+            partner = cursor.fetchone()
+            if not partner or partner[1] != transaction_id:
+                raise ValueError("This transfer pair is broken. Deletion was stopped to protect the inventory.")
+            ids_to_delete.append(partner_id)
+
+        cursor.execute("DELETE FROM transactions WHERE id = ANY(%s)", (ids_to_delete,))
+        cursor.execute(
+            'INSERT INTO audit_log ("user", action, timestamp) VALUES (%s, %s, CURRENT_TIMESTAMP)',
+            (user, f"DELETED transaction record(s): {', '.join(f'TX-{value}' for value in ids_to_delete)}"),
+        )
+        conn.commit()
+        return ids_to_delete
+    except Exception:
+        conn.rollback()
+        raise
+
 @st.dialog("✏️ Edit Transaction")
 def edit_transaction_dialog(conn, cursor, tx_item, supplier_dict):
     st.write(f"Editing Transaction **TX-{tx_item['id']}** for Truck **{tx_item['truck']}**")
@@ -44,21 +181,39 @@ def edit_transaction_dialog(conn, cursor, tx_item, supplier_dict):
         new_supplier_id = tx_item.get('supplier_id')
 
     if st.button("Save Changes", type="primary"):
-        cursor.execute("""
-            UPDATE transactions 
-            SET date = %s, liters = %s, supplier_id = %s
-            WHERE id = %s
-        """, (str(new_date), new_liters, new_supplier_id, tx_item['id']))
-        
-        # Update partner transaction if part of a transfer
-        if tx_item['transfer_partner_id']:
-            cursor.execute("UPDATE transactions SET liters = %s, date = %s WHERE id = %s", 
-                           (new_liters, str(new_date), tx_item['transfer_partner_id']))
+        try:
+            cursor.execute("SELECT id FROM transactions WHERE id=%s FOR UPDATE", (tx_item['id'],))
+            if not cursor.fetchone():
+                raise ValueError("This transaction no longer exists.")
+            partner_id = tx_item['transfer_partner_id']
+            if partner_id:
+                cursor.execute(
+                    "SELECT id, transfer_partner_id FROM transactions WHERE id=%s FOR UPDATE",
+                    (partner_id,),
+                )
+                partner = cursor.fetchone()
+                if not partner or partner[1] != tx_item['id']:
+                    raise ValueError("This transfer pair is broken. It cannot be edited safely.")
 
-        conn.commit()
-        log_action(cursor, conn, f"EDITED TX-{tx_item['id']}: Updated Liters to {new_liters:,.2f} L and Date to {new_date}")
-        st.success("Transaction updated!")
-        st.rerun()
+            cursor.execute(
+                "UPDATE transactions SET date=%s, liters=%s, supplier_id=%s WHERE id=%s",
+                (str(new_date), new_liters, new_supplier_id, tx_item['id']),
+            )
+            if partner_id:
+                cursor.execute(
+                    "UPDATE transactions SET liters=%s, date=%s WHERE id=%s",
+                    (new_liters, str(new_date), partner_id),
+                )
+            cursor.execute(
+                'INSERT INTO audit_log ("user", action, timestamp) VALUES (%s, %s, CURRENT_TIMESTAMP)',
+                (st.session_state.get("user", "System"), f"EDITED TX-{tx_item['id']} and linked transfer partner: {new_liters:,.2f} L on {new_date}"),
+            )
+            conn.commit()
+            st.success("Transaction updated safely.")
+            st.rerun()
+        except Exception as error:
+            conn.rollback()
+            st.error(str(error))
 
 @st.dialog("⚠️ Confirm Bulk Delete")
 def confirm_bulk_delete_dialog(conn, cursor, truck_id, truck_name, start_date, end_date, supplier_id=None):
@@ -68,11 +223,13 @@ def confirm_bulk_delete_dialog(conn, cursor, truck_id, truck_name, start_date, e
         cursor.execute("""
             SELECT COUNT(*) FROM transactions 
             WHERE truck_id = %s AND date >= %s AND date <= %s AND supplier_id = %s
+              AND transfer_partner_id IS NULL
         """, (truck_id, str(start_date), str(end_date), supplier_id))
     else:
         cursor.execute("""
             SELECT COUNT(*) FROM transactions 
             WHERE truck_id = %s AND date >= %s AND date <= %s
+              AND transfer_partner_id IS NULL
         """, (truck_id, str(start_date), str(end_date)))
     
     count = cursor.fetchone()[0]
@@ -87,11 +244,13 @@ def confirm_bulk_delete_dialog(conn, cursor, truck_id, truck_name, start_date, e
             cursor.execute("""
                 DELETE FROM transactions 
                 WHERE truck_id = %s AND date >= %s AND date <= %s AND supplier_id = %s
+                  AND transfer_partner_id IS NULL
             """, (truck_id, str(start_date), str(end_date), supplier_id))
         else:
             cursor.execute("""
                 DELETE FROM transactions 
                 WHERE truck_id = %s AND date >= %s AND date <= %s
+                  AND transfer_partner_id IS NULL
             """, (truck_id, str(start_date), str(end_date)))
         
         conn.commit()
@@ -101,7 +260,7 @@ def confirm_bulk_delete_dialog(conn, cursor, truck_id, truck_name, start_date, e
 
 @st.dialog("⚠️ CONFIRM CLEAR ALL IN (UPLIFT) DATA")
 def confirm_clear_in_dialog(conn, cursor):
-    cursor.execute("SELECT COUNT(*) FROM transactions WHERE type = 'IN'")
+    cursor.execute("SELECT COUNT(*) FROM transactions WHERE type = 'IN' AND transfer_partner_id IS NULL")
     count = cursor.fetchone()[0]
     
     st.error(f"🚨 **WARNING:** You are about to permanently delete ALL **{count}** UPLIFT (Fuel IN) records from the database!")
@@ -112,7 +271,7 @@ def confirm_clear_in_dialog(conn, cursor):
         return
 
     if st.button("🔴 YES, WIPE ALL IN / UPLIFT RECORDS", type="primary", use_container_width=True):
-        cursor.execute("DELETE FROM transactions WHERE type = 'IN'")
+        cursor.execute("DELETE FROM transactions WHERE type = 'IN' AND transfer_partner_id IS NULL")
         conn.commit()
         log_action(cursor, conn, f"ADMIN WIPED ALL UPLIFT (IN) TRANSACTIONS ({count} records)")
         st.success(f"Successfully deleted all {count} IN (Uplift) records!")
@@ -120,7 +279,7 @@ def confirm_clear_in_dialog(conn, cursor):
 
 @st.dialog("⚠️ CONFIRM CLEAR ALL OUT (DELIVERY) DATA")
 def confirm_clear_out_dialog(conn, cursor):
-    cursor.execute("SELECT COUNT(*) FROM transactions WHERE type = 'OUT'")
+    cursor.execute("SELECT COUNT(*) FROM transactions WHERE type = 'OUT' AND transfer_partner_id IS NULL")
     count = cursor.fetchone()[0]
     
     st.error(f"🚨 **WARNING:** You are about to permanently delete ALL **{count}** DELIVERY (Fuel OUT) records from the database!")
@@ -131,7 +290,7 @@ def confirm_clear_out_dialog(conn, cursor):
         return
 
     if st.button("🔴 YES, WIPE ALL OUT / DELIVERY RECORDS", type="primary", use_container_width=True):
-        cursor.execute("DELETE FROM transactions WHERE type = 'OUT'")
+        cursor.execute("DELETE FROM transactions WHERE type = 'OUT' AND transfer_partner_id IS NULL")
         conn.commit()
         log_action(cursor, conn, f"ADMIN WIPED ALL DELIVERY (OUT) TRANSACTIONS ({count} records)")
         st.success(f"Successfully deleted all {count} OUT (Delivery) records!")
@@ -308,27 +467,12 @@ def render_transactions(conn, cursor, truck_dict, truck_list):
                 st.error("❌ Source truck does not have enough inventory!")
             else:
                 try:
-                    cursor.execute("""
-                        INSERT INTO transactions (truck_id, date, liters, type, created_by) 
-                        VALUES (%s, %s, %s, 'OUT', %s) RETURNING id
-                    """, (source_id, str(transfer_date), transfer_liters, active_user))
-                    source_tx_id = cursor.fetchone()[0]
-
-                    cursor.execute("""
-                        INSERT INTO transactions (truck_id, date, liters, type, created_by) 
-                        VALUES (%s, %s, %s, 'IN', %s) RETURNING id
-                    """, (dest_id, str(transfer_date), transfer_liters, active_user))
-                    dest_tx_id = cursor.fetchone()[0]
-
-                    cursor.execute("UPDATE transactions SET transfer_partner_id = %s WHERE id = %s", (dest_tx_id, source_tx_id))
-                    cursor.execute("UPDATE transactions SET transfer_partner_id = %s WHERE id = %s", (source_tx_id, dest_tx_id))
-                    
-                    conn.commit()
-                    log_action(cursor, conn, f"TRANSFERRED {transfer_liters:,.2f} L from '{source_truck}' to '{dest_truck}'")
+                    source_tx_id, dest_tx_id, remaining_balance = create_safe_transfer(
+                        conn, source_id, dest_id, transfer_date,
+                        float(transfer_liters), active_user
+                    )
                     st.success(f"Successfully transferred {transfer_liters:,.2f} L! 🚛💨")
-                    st.rerun()
                 except Exception as e:
-                    conn.rollback()
                     st.error(f"Error executing transfer: {e}")
 
     # ==========================================
@@ -366,11 +510,20 @@ def render_transactions(conn, cursor, truck_dict, truck_list):
                 if col_clear_out.button("🔥 Clear ALL DELIVERY (OUT) Data", use_container_width=True):
                     confirm_clear_out_dialog(conn, cursor)
 
+        if user_role == "ADMIN":
+            integrity_issues = get_transfer_integrity_issues(conn)
+            if integrity_issues.empty:
+                st.success("Transfer integrity check passed: all linked transfer records are complete and consistent.")
+            else:
+                st.error(f"Transfer integrity warning: {len(integrity_issues)} broken or inconsistent record(s) found.")
+                with st.expander("View transfer integrity issues"):
+                    st.dataframe(integrity_issues, use_container_width=True, hide_index=True)
+
         history_df = pd.read_sql_query("""
             SELECT transactions.id AS id,
                    transactions.date,
                    transactions.truck_id,
-                   CONCAT(trucks.emirate, ' ', trucks.plate_code, ' ', trucks.plate_number) AS truck,
+                   COALESCE(CONCAT(trucks.emirate, ' ', trucks.plate_code, ' ', trucks.plate_number), 'Deleted truck') AS truck,
                    transactions.liters,
                    transactions.type,
                    suppliers.name AS supplier_name,
@@ -378,7 +531,7 @@ def render_transactions(conn, cursor, truck_dict, truck_list):
                    transactions.transfer_partner_id,
                    COALESCE(transactions.created_by, 'System') AS created_by
             FROM transactions
-            JOIN trucks ON transactions.truck_id = trucks.id
+            LEFT JOIN trucks ON transactions.truck_id = trucks.id
             LEFT JOIN suppliers ON transactions.supplier_id = suppliers.id
             ORDER BY transactions.id DESC
         """, conn)
@@ -460,7 +613,7 @@ def render_transactions(conn, cursor, truck_dict, truck_list):
                         "Filter by Transaction Name/Type", 
                         ["All Transactions", "Standard Uplift (IN)", "Standard Delivery (OUT)", "Internal Transfers Only"]
                     )
-                    search_query = col_f4.text_input("Global Search (Supplier name, ID, User, etc.)", "").strip().lower()
+                    search_query = col_f4.text_input("Global Search (truck, supplier, quantity, TX ID, partner ID, user)", "").strip().lower()
 
                 filtered_df = history_df.copy()
 
@@ -481,11 +634,14 @@ def render_transactions(conn, cursor, truck_dict, truck_list):
                     filtered_df = filtered_df[filtered_df['transfer_partner_id'].notna()]
 
                 if search_query:
+                    normalized_search = search_query.replace("tx-", "").strip()
                     filtered_df = filtered_df[
                         (filtered_df['supplier_name'].str.lower().str.contains(search_query, na=False)) |
                         (filtered_df['truck'].str.lower().str.contains(search_query, na=False)) |
                         (filtered_df['created_by'].str.lower().str.contains(search_query, na=False)) |
-                        (filtered_df['id'].astype(str).str.contains(search_query))
+                        (filtered_df['id'].astype(str).str.contains(normalized_search, regex=False)) |
+                        (filtered_df['transfer_partner_id'].fillna('').astype(str).str.contains(normalized_search, regex=False)) |
+                        (filtered_df['liters'].astype(float).map(lambda value: f"{value:g}").str.contains(normalized_search, regex=False))
                     ]
 
                 col_info, col_download = st.columns([3, 1])
@@ -505,8 +661,9 @@ def render_transactions(conn, cursor, truck_dict, truck_list):
                         'liters': 'Liters',
                         'type': 'Type',
                         'supplier_name': 'Supplier Name',
-                        'created_by': 'Created By'
-                    })[['Transaction ID', 'Date', 'Truck', 'Type', 'Liters', 'Context', 'Supplier Name', 'Created By']]
+                        'created_by': 'Created By',
+                        'transfer_partner_id': 'Partner Transaction ID'
+                    })[['Transaction ID', 'Partner Transaction ID', 'Date', 'Truck', 'Type', 'Liters', 'Context', 'Supplier Name', 'Created By']]
 
                     buffer = io.BytesIO()
                     with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
@@ -537,7 +694,7 @@ def render_transactions(conn, cursor, truck_dict, truck_list):
                     col3.write(f"**{item['liters']:,.2f} L**")
                     
                     if item['transfer_partner_id']:
-                        ctx = f"🔄 Transfer ({'IN' if item['type']=='IN' else 'OUT'})"
+                        ctx = f"🔄 Transfer ({'IN' if item['type']=='IN' else 'OUT'}) linked to TX-{int(item['transfer_partner_id'])}"
                     else:
                         ctx = f"📥 Uplift [{item['supplier_name']}]" if item['type'] == 'IN' else "📤 Delivery"
                     
@@ -551,13 +708,12 @@ def render_transactions(conn, cursor, truck_dict, truck_list):
                         edit_transaction_dialog(conn, cursor, item, supplier_dict)
 
                     if del_col.button("🗑️", key=f"del_{item['id']}"):
-                        cursor.execute("DELETE FROM transactions WHERE id = %s", (item['id'],))
-                        if item['transfer_partner_id']:
-                            cursor.execute("DELETE FROM transactions WHERE id = %s", (item['transfer_partner_id'],))
-                        conn.commit()
-                        log_action(cursor, conn, f"DELETED Transaction TX-{item['id']} ({item['liters']:,.2f} L for Truck '{item['truck']}')")
-                        st.toast(f"Deleted TX-{item['id']} successfully!")
-                        st.rerun()
+                        try:
+                            deleted_ids = delete_transaction_safely(conn, int(item['id']), active_user)
+                            st.toast("Deleted " + " and ".join(f"TX-{value}" for value in deleted_ids) + " safely.")
+                            st.rerun()
+                        except Exception as error:
+                            st.error(str(error))
 
     # ==========================================
     # TAB 5: SYSTEM AUDIT LOG VIEWER
