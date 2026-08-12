@@ -6,7 +6,6 @@ from bulk_upload import render_bulk_upload
 from dashboard import render_dashboard
 from database import get_connection, init_db
 from ledger import render_ledger
-from repair_transfer import render_transfer_repair
 from reports import render_reports
 from settings import render_settings
 from transactions import render_transactions
@@ -240,9 +239,3 @@ elif page == "Manage Users":
         conn,
         cursor,
     )
-
-    st.divider()
-
-    st.subheader("Historical Transfer Repair")
-
-    render_transfer_repair(conn)
