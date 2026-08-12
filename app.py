@@ -6,6 +6,7 @@ from bulk_upload import render_bulk_upload
 from dashboard import render_dashboard
 from database import get_connection, init_db
 from ledger import render_ledger
+from repair_transfer import render_transfer_repair
 from reports import render_reports
 from settings import render_settings
 from transactions import render_transactions
@@ -47,7 +48,10 @@ if st.session_state.get("role") == "ADMIN":
 labels = list(menu)
 
 if "main_navigation" not in st.session_state:
-    requested_page = st.query_params.get("page", labels[0])
+    requested_page = st.query_params.get(
+        "page",
+        labels[0],
+    )
 
     if requested_page in labels:
         st.session_state["main_navigation"] = requested_page
@@ -76,16 +80,26 @@ st.sidebar.caption(
     f"{st.session_state['role'].title()}"
 )
 
-if st.sidebar.button("Sign out", use_container_width=True):
+if st.sidebar.button(
+    "Sign out",
+    use_container_width=True,
+):
     logout(conn)
 
 cursor = conn.cursor()
 
 cursor.execute(
     """
-    SELECT id, emirate, plate_code, plate_number
+    SELECT
+        id,
+        emirate,
+        plate_code,
+        plate_number
     FROM trucks
-    ORDER BY emirate, plate_code, plate_number
+    ORDER BY
+        emirate,
+        plate_code,
+        plate_number
     """
 )
 
@@ -99,7 +113,11 @@ truck_dict = {
 truck_list = list(truck_dict)
 
 if page == "Dashboard":
-    render_dashboard(conn, truck_dict, truck_list)
+    render_dashboard(
+        conn,
+        truck_dict,
+        truck_list,
+    )
 
 elif page == "Transactions":
     render_transactions(
@@ -114,13 +132,18 @@ elif page == "Manage Trucks":
         "Fleet",
         "Register vehicles and manage truck-level pricing.",
     )
-    render_trucks(conn, cursor)
+
+    render_trucks(
+        conn,
+        cursor,
+    )
 
 elif page == "Reports":
     page_header(
         "Reports",
         "Review fuel movement, cost, and operational performance.",
     )
+
     render_reports(
         conn,
         truck_dict,
@@ -132,6 +155,7 @@ elif page == "Ledger":
         "Truck Ledger",
         "Trace balances and movements by vehicle.",
     )
+
     render_ledger(
         conn,
         truck_dict,
@@ -143,6 +167,7 @@ elif page == "Bulk Upload":
         "Import Data",
         "Validate and import delivery records from Excel.",
     )
+
     render_bulk_upload(
         conn,
         cursor,
@@ -153,7 +178,10 @@ elif page == "Bulk Upload":
 elif page == "Refill Approvals":
     from approvals import render_approvals
 
-    render_approvals(conn, cursor)
+    render_approvals(
+        conn,
+        cursor,
+    )
 
 elif page == "Audit Log":
     page_header(
@@ -195,7 +223,10 @@ elif page == "Settings":
         "Manage global pricing and stock thresholds.",
     )
 
-    render_settings(conn, cursor)
+    render_settings(
+        conn,
+        cursor,
+    )
 
 elif page == "Manage Users":
     require_role("ADMIN")
@@ -205,4 +236,13 @@ elif page == "Manage Users":
         "Create accounts and control application permissions.",
     )
 
-    render_user_management(conn, cursor)
+    render_user_management(
+        conn,
+        cursor,
+    )
+
+    st.divider()
+
+    st.subheader("Historical Transfer Repair")
+
+    render_transfer_repair(conn)
