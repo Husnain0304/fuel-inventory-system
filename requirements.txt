@@ -4,4 +4,3 @@ pandas
 bcrypt
 openpyxl
 plotly
-streamlit-cookies-controller==0.0.4
