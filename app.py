@@ -38,16 +38,13 @@ if st.session_state.get("role") == "ADMIN":
     menu["User Access"] = "Manage Users"
 
 labels = list(menu)
-requested = st.query_params.get("page", labels[0])
-default_index = labels.index(requested) if requested in labels else 0
-selected = st.sidebar.radio("WORKSPACE", labels, index=default_index)
-st.query_params["page"] = selected
+selected = st.sidebar.radio("WORKSPACE", labels, key="main_navigation")
 page = menu[selected]
 
 st.sidebar.divider()
 st.sidebar.caption(f"Signed in as {st.session_state['user']} · {st.session_state['role'].title()}")
 if st.sidebar.button("Sign out", use_container_width=True):
-    logout()
+    logout(conn)
 
 cursor = conn.cursor()
 cursor.execute("SELECT id, emirate, plate_code, plate_number FROM trucks ORDER BY emirate, plate_code, plate_number")

@@ -1,6 +1,10 @@
+import hashlib
+import secrets
 import time
+from datetime import datetime, timedelta
 
 import streamlit as st
+from streamlit_cookies_controller import CookieController
 
 from security import hash_password, verify_password
 from ui import apply_theme
@@ -8,9 +12,20 @@ from ui import apply_theme
 
 MAX_ATTEMPTS = 5
 LOCK_SECONDS = 60
+SESSION_DAYS = 7
+COOKIE_NAME = "fillit_session"
 
 
-def _login_allowed() -> bool:
+@st.cache_resource(show_spinner=False)
+def _cookies():
+    return CookieController()
+
+
+def _token_hash(token):
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def _login_allowed():
     locked_until = st.session_state.get("login_locked_until", 0)
     if locked_until > time.time():
         st.error(f"Too many attempts. Try again in {int(locked_until - time.time()) + 1} seconds.")
@@ -18,7 +33,43 @@ def _login_allowed() -> bool:
     return True
 
 
-def login_system(conn) -> None:
+def _create_session(conn, user_id):
+    raw_token = secrets.token_urlsafe(32)
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM login_sessions WHERE expires_at < CURRENT_TIMESTAMP OR revoked=TRUE")
+    cursor.execute(
+        "INSERT INTO login_sessions (user_id, token_hash, expires_at) VALUES (%s, %s, %s)",
+        (user_id, _token_hash(raw_token), datetime.utcnow() + timedelta(days=SESSION_DAYS)),
+    )
+    conn.commit()
+    _cookies().set(COOKIE_NAME, raw_token)
+    st.session_state["session_token"] = raw_token
+
+
+def _restore_session(conn):
+    raw_token = st.session_state.get("session_token") or _cookies().get(COOKIE_NAME)
+    if not raw_token:
+        return False
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT u.id, u.username, u.role
+        FROM login_sessions s JOIN users u ON u.id=s.user_id
+        WHERE s.token_hash=%s AND s.revoked=FALSE AND s.expires_at > CURRENT_TIMESTAMP
+        """,
+        (_token_hash(raw_token),),
+    )
+    user = cursor.fetchone()
+    if not user:
+        return False
+    st.session_state["session_token"] = raw_token
+    st.session_state["user_id"] = user[0]
+    st.session_state["user"] = user[1]
+    st.session_state["role"] = user[2]
+    return True
+
+
+def login_system(conn):
     apply_theme()
     left, centre, right = st.columns([1, 1.15, 1])
     with centre:
@@ -43,6 +94,7 @@ def login_system(conn) -> None:
                 st.session_state["user"] = result[1]
                 st.session_state["role"] = result[3]
                 st.session_state["login_attempts"] = 0
+                _create_session(conn, result[0])
                 st.rerun()
             else:
                 attempts = st.session_state.get("login_attempts", 0) + 1
@@ -53,28 +105,30 @@ def login_system(conn) -> None:
                 st.error("The username or password is incorrect.")
 
 
-def require_login(conn) -> None:
-    user_id = st.session_state.get("user_id")
-    if user_id:
-        cursor = conn.cursor()
-        cursor.execute("SELECT username, role FROM users WHERE id=%s", (user_id,))
-        current = cursor.fetchone()
-        if current:
-            st.session_state["user"], st.session_state["role"] = current
-            return
-    for key in ("user_id", "user", "role"):
-        st.session_state.pop(key, None)
-    login_system(conn)
-    st.stop()
+def require_login(conn):
+    if not st.session_state.get("user_id") and not _restore_session(conn):
+        login_system(conn)
+        st.stop()
+    cursor = conn.cursor()
+    cursor.execute("SELECT username, role FROM users WHERE id=%s", (st.session_state["user_id"],))
+    current = cursor.fetchone()
+    if not current:
+        logout(conn)
+    st.session_state["user"], st.session_state["role"] = current
 
 
-def require_role(*roles: str) -> None:
+def require_role(*roles):
     if st.session_state.get("role") not in roles:
         st.error("You do not have permission to view this page.")
         st.stop()
 
 
-def logout() -> None:
+def logout(conn=None):
+    raw_token = st.session_state.get("session_token") or _cookies().get(COOKIE_NAME)
+    if conn is not None and raw_token:
+        cursor = conn.cursor()
+        cursor.execute("UPDATE login_sessions SET revoked=TRUE WHERE token_hash=%s", (_token_hash(raw_token),))
+        conn.commit()
+    _cookies().remove(COOKIE_NAME)
     st.session_state.clear()
-    st.query_params.clear()
     st.rerun()

@@ -89,6 +89,15 @@ def init_db(_conn) -> bool:
             role TEXT NOT NULL CHECK(role IN ('ADMIN','OPERATOR'))
         )""")
         cursor.execute("""
+        CREATE TABLE IF NOT EXISTS login_sessions (
+            id SERIAL PRIMARY KEY,
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            token_hash TEXT UNIQUE NOT NULL,
+            expires_at TIMESTAMP NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            revoked BOOLEAN DEFAULT FALSE
+        )""")
+        cursor.execute("""
         CREATE TABLE IF NOT EXISTS audit_log (
             id SERIAL PRIMARY KEY, "user" TEXT, action TEXT,
             timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -136,6 +145,7 @@ def init_db(_conn) -> bool:
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_transactions_file_id ON transactions(file_id)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_audit_log_id_desc ON audit_log(id DESC)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_refill_status ON refill_requests(status, id DESC)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_login_sessions_token ON login_sessions(token_hash, expires_at)")
 
         cursor.execute("SELECT COUNT(*) FROM users")
         if cursor.fetchone()[0] == 0:
