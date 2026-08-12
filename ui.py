@@ -1,69 +1,74 @@
-from pathlib import Path
+from html import escape
 
 import streamlit as st
 
+from branding import DEFAULT_PROFILE, logo_file
 
-INK = "#171717"
+INK = "#172033"
 RED = "#8C1C1C"
-GREEN = "#05AF52"
+GREEN = "#0B8F55"
 
 
-def apply_theme() -> None:
-    st.markdown(
-        """
-        <style>
-        :root { --fillit-ink:#171717; --fillit-red:#8C1C1C; --fillit-green:#05AF52; }
-        .stApp { background:#F6F6F4; color:#242424; }
-        [data-testid="stSidebar"] { background:linear-gradient(180deg,#171717 0%,#0C0C0C 100%); }
-        [data-testid="stSidebar"] * { color:#F8FAFC; }
-        [data-testid="stSidebar"] .stRadio label { padding:.34rem .48rem; border-radius:.55rem; }
-        [data-testid="stMetric"] { background:#FFFFFF; border:1px solid #E8E4E1; border-radius:12px;
-            padding:16px 18px; box-shadow:0 4px 18px rgba(23,23,23,.05); }
-        [data-testid="stMetricValue"] { color:#171717; font-weight:750; }
-        .stButton>button, .stDownloadButton>button { border-radius:9px; font-weight:650; min-height:2.65rem; }
-        .stButton>button[kind="primary"] { background:#8C1C1C; border-color:#8C1C1C; }
-        div[data-testid="stDataFrame"] { border:1px solid #E3EAF2; border-radius:12px; overflow:hidden; }
-        h1,h2,h3 { color:#171717; letter-spacing:-.025em; }
-        .fillit-page-head { display:flex; align-items:center; justify-content:space-between; gap:1rem;
-            background:#fff; border:1px solid #E8E4E1; border-left:5px solid #8C1C1C;
-            padding:18px 22px; border-radius:14px; margin:0 0 1.2rem 0; }
-        .fillit-page-head h1 { font-size:1.55rem; margin:0; }
-        .fillit-page-head p { margin:.2rem 0 0; color:#64748B; }
-        .fillit-user-chip { background:#F7EDED; color:#8C1C1C; padding:7px 11px; border-radius:999px;
-            font-size:.78rem; font-weight:700; white-space:nowrap; }
-        .fillit-stat { background:#fff; border:1px solid #E8E4E1; border-radius:14px; padding:18px;
-            min-height:132px; box-shadow:0 5px 22px rgba(23,23,23,.05); }
-        .fillit-stat-label { color:#777; font-size:.77rem; font-weight:700; letter-spacing:.07em; text-transform:uppercase; }
-        .fillit-stat-value { color:#171717; font-size:1.75rem; font-weight:780; margin:.35rem 0 .2rem; }
-        .fillit-stat-note { color:#777; font-size:.78rem; }
-        .fillit-alert { background:#FFF7F2; border:1px solid #F2D8CC; border-radius:12px; padding:14px 16px; }
-        .block-container { padding-top:1.5rem; padding-bottom:3rem; max-width:1500px; }
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
+def profile():
+    return st.session_state.get("company_profile", DEFAULT_PROFILE)
 
 
-def render_sidebar_brand() -> None:
-    logo = Path(__file__).parent / "assets" / "fillit-logo.png"
-    if logo.exists():
-        st.sidebar.image(str(logo), width=185)
-    st.sidebar.caption("CORPORATE FUEL OPERATIONS")
+def apply_theme(company=None):
+    company = company or profile()
+    primary = company.get("primary_color", RED)
+    secondary = company.get("secondary_color", INK)
+    accent = company.get("accent_color", GREEN)
+    st.markdown(f"""
+    <style>
+    :root{{--primary:{primary};--secondary:{secondary};--accent:{accent};}}
+    .stApp{{background:#F4F6F8;color:#172033}}
+    [data-testid="stSidebar"]{{background:linear-gradient(180deg,#111827,#0B1220)}}
+    [data-testid="stSidebar"] *{{color:#F8FAFC}}
+    [data-testid="stSidebar"] .stRadio label{{padding:.45rem .58rem;border-radius:.55rem}}
+    .block-container{{padding-top:1.25rem;padding-bottom:3rem;max-width:1560px}}
+    h1,h2,h3{{color:#172033;letter-spacing:-.025em}}
+    .stButton>button,.stDownloadButton>button{{border-radius:9px;font-weight:650;min-height:2.65rem}}
+    .stButton>button[kind="primary"]{{background:{primary};border-color:{primary}}}
+    [data-testid="stMetric"],.product-card{{background:white;border:1px solid #E4E8EE;border-radius:14px;
+      padding:17px 19px;box-shadow:0 7px 24px rgba(15,23,42,.055)}}
+    div[data-testid="stDataFrame"]{{border:1px solid #E4E8EE;border-radius:12px;overflow:hidden}}
+    .page-head{{display:flex;justify-content:space-between;align-items:center;gap:1rem;background:white;
+      border:1px solid #E4E8EE;border-left:5px solid {primary};padding:19px 22px;border-radius:14px;margin-bottom:1.15rem}}
+    .page-head h1{{font-size:1.55rem;margin:0}} .page-head p{{color:#64748B;margin:.25rem 0 0}}
+    .user-chip{{background:{primary}12;color:{primary};padding:7px 12px;border-radius:999px;font-weight:700;font-size:.78rem}}
+    .stat{{background:white;border:1px solid #E4E8EE;border-radius:14px;padding:18px;min-height:125px;
+      box-shadow:0 7px 24px rgba(15,23,42,.05)}}
+    .stat-label{{color:#64748B;font-size:.72rem;font-weight:750;letter-spacing:.075em;text-transform:uppercase}}
+    .stat-value{{font-size:1.72rem;font-weight:780;margin:.38rem 0;color:#111827}} .stat-note{{color:#64748B;font-size:.79rem}}
+    .action-card{{background:white;border:1px solid #E4E8EE;border-radius:14px;padding:17px;min-height:105px}}
+    .action-title{{font-weight:760;font-size:1rem;color:#172033}} .action-note{{color:#64748B;font-size:.8rem;margin-top:.28rem}}
+    .eyebrow{{color:{primary};font-size:.73rem;font-weight:800;letter-spacing:.1em;text-transform:uppercase}}
+    </style>""", unsafe_allow_html=True)
 
 
-def page_header(title: str, subtitle: str) -> None:
-    user = st.session_state.get("user", "User")
-    role = st.session_state.get("role", "")
-    st.markdown(
-        f'<div class="fillit-page-head"><div><h1>{title}</h1><p>{subtitle}</p></div>'
-        f'<span class="fillit-user-chip">{user} · {role.title()}</span></div>',
-        unsafe_allow_html=True,
-    )
+def render_sidebar_brand(company=None):
+    company = company or profile()
+    logo = logo_file(company)
+    if logo:
+        st.sidebar.image(str(logo), width=180)
+    else:
+        st.sidebar.markdown(f"## {escape(company['company_name'])}")
+    st.sidebar.caption(escape(company.get("application_name", "Fuel Inventory Control")).upper())
 
 
-def stat_card(label: str, value: str, note: str = "") -> None:
-    st.markdown(
-        f'<div class="fillit-stat"><div class="fillit-stat-label">{label}</div>'
-        f'<div class="fillit-stat-value">{value}</div><div class="fillit-stat-note">{note}</div></div>',
-        unsafe_allow_html=True,
-    )
+def page_header(title, subtitle):
+    user = escape(str(st.session_state.get("user", "User")))
+    role = escape(str(st.session_state.get("role", "")).title())
+    st.markdown(f'<div class="page-head"><div><h1>{escape(title)}</h1><p>{escape(subtitle)}</p></div>'
+                f'<span class="user-chip">{user} · {role}</span></div>', unsafe_allow_html=True)
+
+
+def stat_card(label, value, note=""):
+    st.markdown(f'<div class="stat"><div class="stat-label">{escape(str(label))}</div>'
+                f'<div class="stat-value">{escape(str(value))}</div><div class="stat-note">{escape(str(note))}</div></div>',
+                unsafe_allow_html=True)
+
+
+def action_card(title, note):
+    st.markdown(f'<div class="action-card"><div class="action-title">{escape(title)}</div>'
+                f'<div class="action-note">{escape(note)}</div></div>', unsafe_allow_html=True)

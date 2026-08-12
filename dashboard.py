@@ -5,7 +5,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
-from ui import GREEN, RED, page_header, stat_card
+from ui import GREEN, RED, action_card, page_header, profile, stat_card
 
 
 def _read(conn, query, params=None):
@@ -16,8 +16,48 @@ def _empty_chart(message):
     st.info(message)
 
 
+def _open_page(label):
+    st.session_state["main_navigation"] = label
+    st.query_params["page"] = label
+    st.rerun()
+
+
 def render_dashboard(conn, truck_dict, truck_list):
-    page_header("Executive Overview", "Live fuel position, operational movement, and exceptions requiring attention.")
+    company = profile()
+    page_header("Operations Command Centre", "Start daily work, monitor inventory and act on exceptions from one place.")
+
+    st.markdown(f'<div class="eyebrow">{company["company_name"]} · Quick actions</div>', unsafe_allow_html=True)
+    actions = st.columns(6)
+    quick_actions = [
+        ("Record movement", "Fuel Operations", "Uplift or delivery"),
+        ("Transfer fuel", "Fuel Operations", "Safe truck transfer"),
+        ("View stock", "Fleet Inventory", "Balances by truck"),
+        ("Import data", "Integration Inbox", "Validate delivery file"),
+        ("Generate report", "Report Centre", "Analyse and download"),
+        ("Review audit", "Audit Centre", "Who changed what"),
+    ]
+    for column, (title, destination, note) in zip(actions, quick_actions):
+        with column:
+            action_card(title, note)
+            if st.button("Open", key=f"quick_{destination}_{title}", use_container_width=True):
+                _open_page(destination)
+
+    st.write("")
+    menu_columns = st.columns(4)
+    menus = [
+        ("Fuel operations", [("Transactions and transfers", "Fuel Operations"), ("Truck ledger", "Truck Ledger")]),
+        ("Inventory control", [("Fleet inventory", "Fleet Inventory")]),
+        ("Management", [("Approvals", "Approvals"), ("Reports", "Report Centre"), ("Audit", "Audit Centre")]),
+        ("Data and setup", [("Integration inbox", "Integration Inbox"), ("Configuration", "Configuration")]),
+    ]
+    for index, (heading, links) in enumerate(menus):
+        with menu_columns[index]:
+            with st.popover(heading, use_container_width=True):
+                for caption, destination in links:
+                    if destination == "Configuration" and st.session_state.get("role") != "ADMIN":
+                        continue
+                    if st.button(caption, key=f"menu_{index}_{destination}", use_container_width=True):
+                        _open_page(destination)
 
     controls = st.container(border=True)
     with controls:

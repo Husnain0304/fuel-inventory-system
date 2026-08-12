@@ -41,7 +41,7 @@ class ConnectionManager:
         return psycopg2.connect(
             self.url,
             connect_timeout=10,
-            application_name="fillit",
+            application_name="fuel_inventory_control",
             keepalives=1,
             keepalives_idle=30,
             keepalives_interval=10,
@@ -120,6 +120,53 @@ def init_db(_conn) -> bool:
             uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )""")
         cursor.execute("CREATE TABLE IF NOT EXISTS suppliers (id SERIAL PRIMARY KEY, name TEXT UNIQUE NOT NULL)")
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS company_profile (
+            id SERIAL PRIMARY KEY, company_name TEXT NOT NULL DEFAULT 'FILLIT',
+            application_name TEXT NOT NULL DEFAULT 'Fuel Inventory Control',
+            tagline TEXT, primary_color TEXT DEFAULT '#8C1C1C',
+            secondary_color TEXT DEFAULT '#171717', accent_color TEXT DEFAULT '#05AF52',
+            currency TEXT DEFAULT 'AED', timezone TEXT DEFAULT 'Asia/Dubai',
+            date_format TEXT DEFAULT 'DD MMM YYYY', volume_unit TEXT DEFAULT 'L',
+            logo_path TEXT DEFAULT 'assets/fillit-logo.png', report_footer TEXT,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, updated_by TEXT
+        )""")
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS module_settings (
+            module_key TEXT PRIMARY KEY, display_name TEXT NOT NULL,
+            enabled BOOLEAN NOT NULL DEFAULT TRUE, sort_order INTEGER NOT NULL DEFAULT 0
+        )""")
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS audit_events (
+            id BIGSERIAL PRIMARY KEY, occurred_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            user_id INTEGER, username TEXT NOT NULL DEFAULT 'System', user_role TEXT,
+            action TEXT NOT NULL, module TEXT NOT NULL, entity_type TEXT, entity_id TEXT,
+            description TEXT, old_values JSONB, new_values JSONB,
+            status TEXT NOT NULL DEFAULT 'SUCCESS', severity TEXT NOT NULL DEFAULT 'INFO',
+            business_location TEXT, session_reference TEXT
+        )""")
+
+        cursor.execute("""
+            INSERT INTO company_profile
+            (company_name, application_name, tagline, report_footer)
+            SELECT 'FILLIT', 'Fuel Inventory Control',
+                   'Inventory intelligence for fuel operations',
+                   'Confidential inventory report'
+            WHERE NOT EXISTS (SELECT 1 FROM company_profile)
+        """)
+        modules = (
+            ('dashboard','Command Centre',True,10), ('transactions','Fuel Operations',True,20),
+            ('fleet','Fleet Inventory',True,30), ('ledger','Truck Ledger',True,40),
+            ('imports','Integration Inbox',True,50), ('approvals','Approvals',True,60),
+            ('reports','Report Centre',True,70), ('audit','Audit Centre',True,80),
+            ('settings','Configuration',True,90), ('users','User Access',True,100),
+            ('storage','Depots & Tanks',False,110), ('procurement','Procurement',False,120),
+            ('forecasting','Forecasting',False,130)
+        )
+        cursor.executemany("""
+            INSERT INTO module_settings (module_key, display_name, enabled, sort_order)
+            VALUES (%s,%s,%s,%s) ON CONFLICT (module_key) DO NOTHING
+        """, modules)
 
         # Compatibility migrations for databases created by earlier FILLIT versions.
         migrations = (
@@ -146,6 +193,9 @@ def init_db(_conn) -> bool:
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_audit_log_id_desc ON audit_log(id DESC)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_refill_status ON refill_requests(status, id DESC)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_login_sessions_token ON login_sessions(token_hash, expires_at)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_audit_events_time ON audit_events(occurred_at DESC)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_audit_events_entity ON audit_events(entity_type, entity_id)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_audit_events_user ON audit_events(username, occurred_at DESC)")
 
         cursor.execute("SELECT COUNT(*) FROM users")
         if cursor.fetchone()[0] == 0:
