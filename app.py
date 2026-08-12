@@ -40,6 +40,10 @@ if st.session_state.get("role") == "ADMIN":
 
 labels = list(menu)
 requested = st.query_params.get("page", labels[0])
+navigation_target = st.session_state.pop("navigation_target", None)
+if navigation_target in labels:
+    st.session_state["main_navigation"] = navigation_target
+    st.query_params["page"] = navigation_target
 if "main_navigation" not in st.session_state or st.session_state["main_navigation"] not in labels:
     st.session_state["main_navigation"] = requested if requested in labels else labels[0]
 

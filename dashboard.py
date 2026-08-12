@@ -17,8 +17,7 @@ def _empty_chart(message):
 
 
 def _open_page(label):
-    st.session_state["main_navigation"] = label
-    st.query_params["page"] = label
+    st.session_state["navigation_target"] = label
     st.rerun()
 
 
