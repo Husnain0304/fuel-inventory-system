@@ -151,6 +151,29 @@ def init_db(_conn) -> bool:
             status TEXT NOT NULL DEFAULT 'SUCCESS', severity TEXT NOT NULL DEFAULT 'INFO',
             business_location TEXT, session_reference TEXT
         )""")
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS stock_reconciliations (
+            id BIGSERIAL PRIMARY KEY,
+            truck_id INTEGER NOT NULL REFERENCES trucks(id),
+            reading_at TIMESTAMPTZ NOT NULL,
+            system_quantity REAL NOT NULL,
+            physical_quantity REAL NOT NULL CHECK(physical_quantity >= 0),
+            variance_quantity REAL NOT NULL,
+            variance_percent REAL NOT NULL DEFAULT 0,
+            reason TEXT NOT NULL,
+            reference TEXT,
+            notes TEXT,
+            status TEXT NOT NULL DEFAULT 'PENDING'
+                CHECK(status IN ('PENDING','APPROVED','REJECTED','POSTED','CANCELLED')),
+            recorded_by TEXT NOT NULL,
+            recorded_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            reviewed_by TEXT,
+            reviewed_at TIMESTAMPTZ,
+            review_comment TEXT,
+            adjustment_transaction_id INTEGER REFERENCES transactions(id),
+            posted_at TIMESTAMPTZ,
+            UNIQUE(adjustment_transaction_id)
+        )""")
 
         cursor.execute("""
             INSERT INTO company_profile
@@ -217,6 +240,8 @@ def init_db(_conn) -> bool:
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_audit_events_time ON audit_events(occurred_at DESC)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_audit_events_entity ON audit_events(entity_type, entity_id)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_audit_events_user ON audit_events(username, occurred_at DESC)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_reconciliation_status ON stock_reconciliations(status, recorded_at DESC)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_reconciliation_truck ON stock_reconciliations(truck_id, reading_at DESC)")
 
         cursor.execute("SELECT COUNT(*) FROM users")
         if cursor.fetchone()[0] == 0:

@@ -52,7 +52,7 @@ def render_dashboard(conn, truck_dict, truck_list):
     actions = [
         ("Record fuel movement", "Post an uplift or delivery and review the resulting balance.", "Fuel Operations", "launch_movement", True),
         ("Transfer inventory", "Move fuel safely between trucks with linked IN and OUT records.", "Fuel Operations", "launch_transfer", False),
-        ("Import delivery data", "Validate external delivery records before inventory is affected.", "Integration Inbox", "launch_import", False),
+        ("Reconcile physical stock", "Compare measured stock with the system and control adjustments.", "Inventory Control", "launch_reconcile", False),
         ("Generate a report", "Filter, analyse and download operational information.", "Report Centre", "launch_report", False),
     ]
     for column, details in zip(action_columns, actions):

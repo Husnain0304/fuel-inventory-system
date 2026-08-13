@@ -7,6 +7,7 @@ from bulk_upload import render_bulk_upload
 from dashboard import render_dashboard
 from database import get_connection, init_db
 from ledger import render_ledger
+from reconciliation import render_reconciliation
 from reports import render_reports
 from settings import render_settings
 from transactions import render_transactions
@@ -28,6 +29,7 @@ menu = {
     "Command Centre": "Dashboard",
     "Fuel Operations": "Transactions",
     "Fleet Inventory": "Manage Trucks",
+    "Inventory Control": "Reconciliation",
     "Truck Ledger": "Ledger",
     "Integration Inbox": "Bulk Upload",
     "Approvals": "Refill Approvals",
@@ -76,6 +78,8 @@ elif page == "Transactions":
 elif page == "Manage Trucks":
     page_header("Fleet Inventory", "Register vehicles and manage truck-level stock controls.")
     render_trucks(conn, cursor)
+elif page == "Reconciliation":
+    render_reconciliation(conn)
 elif page == "Reports":
     page_header("Report Centre", "Review, filter and export inventory and operational performance.")
     render_reports(conn, truck_dict, truck_list)
