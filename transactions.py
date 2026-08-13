@@ -28,16 +28,33 @@ def get_balance(conn, truck_id):
     return df.iloc[0, 0] or 0
 
 
+def get_truck_controls(conn, truck_id):
+    cursor = conn.cursor()
+    cursor.execute("""SELECT capacity_liters, operational_status, product_id
+                      FROM trucks WHERE id=%s""", (truck_id,))
+    row = cursor.fetchone()
+    if not row:
+        return {"capacity": 0.0, "status": "MISSING", "product_id": None}
+    return {"capacity": float(row[0] or 0), "status": row[1] or "ACTIVE", "product_id": row[2]}
+
+
 def create_safe_transfer(conn, source_id, dest_id, transfer_date, liters, user):
     """Create and verify both sides of a transfer in one database transaction."""
     cursor = conn.cursor()
     try:
         cursor.execute(
-            "SELECT id FROM trucks WHERE id = ANY(%s) ORDER BY id FOR UPDATE",
+            "SELECT id, capacity_liters, operational_status, product_id FROM trucks WHERE id = ANY(%s) ORDER BY id FOR UPDATE",
             (sorted([source_id, dest_id]),),
         )
-        if len(cursor.fetchall()) != 2:
+        locked_trucks = {row[0]: row for row in cursor.fetchall()}
+        if len(locked_trucks) != 2:
             raise ValueError("One of the selected trucks no longer exists.")
+        source_profile = locked_trucks[source_id]
+        destination_profile = locked_trucks[dest_id]
+        if source_profile[2] != "ACTIVE" or destination_profile[2] != "ACTIVE":
+            raise ValueError("Both trucks must have Active status before fuel can be transferred.")
+        if source_profile[3] and destination_profile[3] and source_profile[3] != destination_profile[3]:
+            raise ValueError("The selected trucks are assigned to different fuel products.")
 
         cursor.execute(
             """
@@ -51,21 +68,28 @@ def create_safe_transfer(conn, source_id, dest_id, transfer_date, liters, user):
             raise ValueError("Transfer quantity must be greater than zero.")
         if liters > source_balance:
             raise ValueError(f"Insufficient source balance. Available: {source_balance:,.2f} L.")
+        cursor.execute("""SELECT COALESCE(SUM(CASE WHEN type='IN' THEN liters ELSE -liters END),0)
+                          FROM transactions WHERE truck_id=%s""", (dest_id,))
+        destination_balance = float(cursor.fetchone()[0] or 0)
+        destination_capacity = float(destination_profile[1] or 0)
+        if destination_capacity and destination_balance + liters > destination_capacity:
+            available_space = max(destination_capacity - destination_balance, 0)
+            raise ValueError(f"Destination capacity exceeded. Available space: {available_space:,.2f} L.")
 
         cursor.execute(
             """
-            INSERT INTO transactions (truck_id, date, liters, type, created_by)
-            VALUES (%s, %s, %s, 'OUT', %s) RETURNING id
+            INSERT INTO transactions (truck_id, date, liters, type, created_by, product_id, movement_category)
+            VALUES (%s, %s, %s, 'OUT', %s, %s, 'TRANSFER') RETURNING id
             """,
-            (source_id, str(transfer_date), liters, user),
+            (source_id, str(transfer_date), liters, user, source_profile[3]),
         )
         out_id = cursor.fetchone()[0]
         cursor.execute(
             """
-            INSERT INTO transactions (truck_id, date, liters, type, created_by)
-            VALUES (%s, %s, %s, 'IN', %s) RETURNING id
+            INSERT INTO transactions (truck_id, date, liters, type, created_by, product_id, movement_category)
+            VALUES (%s, %s, %s, 'IN', %s, %s, 'TRANSFER') RETURNING id
             """,
-            (dest_id, str(transfer_date), liters, user),
+            (dest_id, str(transfer_date), liters, user, destination_profile[3]),
         )
         in_id = cursor.fetchone()[0]
         cursor.execute("UPDATE transactions SET transfer_partner_id=%s WHERE id=%s", (in_id, out_id))
@@ -335,7 +359,12 @@ def render_transactions(conn, cursor, truck_dict, truck_list):
         truck_id = truck_dict[truck]
 
         balance = get_balance(conn, truck_id)
+        truck_controls = get_truck_controls(conn, truck_id)
         st.info(f"Current Balance for **{truck}**: **{balance:,.2f} L**")
+        if truck_controls["capacity"]:
+            st.caption(f"Tank capacity: {truck_controls['capacity']:,.0f} L · Available space: {max(truck_controls['capacity']-balance,0):,.0f} L")
+        if truck_controls["status"] != "ACTIVE":
+            st.warning(f"This truck is {truck_controls['status'].title()}. New movements are blocked.")
 
         if mode == "UPLIFT (Fuel IN)":
             with st.form("uplift_form", clear_on_submit=True):
@@ -345,14 +374,18 @@ def render_transactions(conn, cursor, truck_dict, truck_list):
                 submit_uplift = st.form_submit_button("Save Uplift Entry", type="primary")
 
             if submit_uplift:
-                if in_liters <= 0:
+                if truck_controls["status"] != "ACTIVE":
+                    st.error("This truck is not Active. Change its fleet inventory status before posting fuel.")
+                elif in_liters <= 0:
                     st.error("Please enter a valid amount of liters.")
+                elif truck_controls["capacity"] and balance + in_liters > truck_controls["capacity"]:
+                    st.error(f"Tank capacity exceeded. Available space: {max(truck_controls['capacity']-balance,0):,.2f} L.")
                 else:
                     supplier_id = supplier_dict.get(selected_supplier_name, None)
                     cursor.execute("""
-                        INSERT INTO transactions (truck_id, date, liters, type, supplier_id, created_by) 
-                        VALUES (%s, %s, %s, 'IN', %s, %s)
-                    """, (truck_id, str(in_date), in_liters, supplier_id, active_user))
+                        INSERT INTO transactions (truck_id, date, liters, type, supplier_id, created_by, product_id, movement_category)
+                        VALUES (%s, %s, %s, 'IN', %s, %s, %s, 'UPLIFT')
+                    """, (truck_id, str(in_date), in_liters, supplier_id, active_user, truck_controls["product_id"]))
                     conn.commit()
                     log_action(cursor, conn, f"Added Uplift of {in_liters:,.2f} L from Supplier '{selected_supplier_name}' for Truck '{truck}' on date {in_date}")
                     st.success("Uplift recorded successfully! ✅")
@@ -390,15 +423,17 @@ def render_transactions(conn, cursor, truck_dict, truck_list):
                 submit_delivery = st.form_submit_button("Save Delivery Entry", type="primary")
 
             if submit_delivery:
-                if out_liters <= 0:
+                if truck_controls["status"] != "ACTIVE":
+                    st.error("This truck is not Active. Change its fleet inventory status before posting fuel.")
+                elif out_liters <= 0:
                     st.error("Please enter a valid amount of liters.")
                 elif out_liters > balance:
                     st.error("❌ Insufficient balance in this truck!")
                 else:
                     cursor.execute("""
-                        INSERT INTO transactions (truck_id, date, liters, type, created_by) 
-                        VALUES (%s, %s, %s, 'OUT', %s)
-                    """, (truck_id, str(out_date), out_liters, active_user))
+                        INSERT INTO transactions (truck_id, date, liters, type, created_by, product_id, movement_category)
+                        VALUES (%s, %s, %s, 'OUT', %s, %s, 'DELIVERY')
+                    """, (truck_id, str(out_date), out_liters, active_user, truck_controls["product_id"]))
                     conn.commit()
                     log_action(cursor, conn, f"Added Delivery of {out_liters:,.2f} L for Truck '{truck}' on date {out_date}")
                     st.success("Delivery recorded successfully! ✅")

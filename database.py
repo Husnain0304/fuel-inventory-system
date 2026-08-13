@@ -121,6 +121,12 @@ def init_db(_conn) -> bool:
         )""")
         cursor.execute("CREATE TABLE IF NOT EXISTS suppliers (id SERIAL PRIMARY KEY, name TEXT UNIQUE NOT NULL)")
         cursor.execute("""
+        CREATE TABLE IF NOT EXISTS products (
+            id SERIAL PRIMARY KEY, code TEXT UNIQUE NOT NULL, name TEXT UNIQUE NOT NULL,
+            unit TEXT NOT NULL DEFAULT 'L', active BOOLEAN NOT NULL DEFAULT TRUE,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )""")
+        cursor.execute("""
         CREATE TABLE IF NOT EXISTS company_profile (
             id SERIAL PRIMARY KEY, company_name TEXT NOT NULL DEFAULT 'FILLIT',
             application_name TEXT NOT NULL DEFAULT 'Fuel Inventory Control',
@@ -176,11 +182,24 @@ def init_db(_conn) -> bool:
             "ALTER TABLE transactions ADD COLUMN IF NOT EXISTS created_by TEXT",
             "ALTER TABLE transactions ADD COLUMN IF NOT EXISTS ticket_number TEXT",
             "ALTER TABLE transactions ADD COLUMN IF NOT EXISTS file_id INTEGER",
+            "ALTER TABLE transactions ADD COLUMN IF NOT EXISTS product_id INTEGER REFERENCES products(id)",
+            "ALTER TABLE transactions ADD COLUMN IF NOT EXISTS movement_category TEXT DEFAULT 'STANDARD'",
+            "ALTER TABLE transactions ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP",
+            "ALTER TABLE trucks ADD COLUMN IF NOT EXISTS product_id INTEGER REFERENCES products(id)",
+            "ALTER TABLE trucks ADD COLUMN IF NOT EXISTS capacity_liters REAL",
+            "ALTER TABLE trucks ADD COLUMN IF NOT EXISTS minimum_stock_liters REAL",
+            "ALTER TABLE trucks ADD COLUMN IF NOT EXISTS reorder_level_liters REAL",
+            "ALTER TABLE trucks ADD COLUMN IF NOT EXISTS operational_status TEXT DEFAULT 'ACTIVE'",
+            "ALTER TABLE trucks ADD COLUMN IF NOT EXISTS notes TEXT",
+            "ALTER TABLE trucks ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP",
         )
         for statement in migrations:
             cursor.execute(statement)
 
         cursor.execute("INSERT INTO suppliers (name) VALUES ('Default Supplier') ON CONFLICT (name) DO NOTHING")
+        cursor.execute("INSERT INTO products (code, name, unit) VALUES ('DSL', 'Diesel', 'L') ON CONFLICT (code) DO NOTHING")
+        cursor.execute("UPDATE trucks SET product_id=(SELECT id FROM products WHERE code='DSL') WHERE product_id IS NULL")
+        cursor.execute("UPDATE transactions tx SET product_id=tr.product_id FROM trucks tr WHERE tx.truck_id=tr.id AND tx.product_id IS NULL")
         cursor.execute("""
             INSERT INTO settings (cost_per_liter, selling_price_per_liter, minimum_stock_level)
             SELECT 3.0, 4.0, 500.0 WHERE NOT EXISTS (SELECT 1 FROM settings)
@@ -190,6 +209,8 @@ def init_db(_conn) -> bool:
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_transactions_truck_date ON transactions(truck_id, date DESC)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_transactions_type_date ON transactions(type, date DESC)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_transactions_file_id ON transactions(file_id)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_transactions_product_date ON transactions(product_id, date DESC)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_trucks_status ON trucks(operational_status)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_audit_log_id_desc ON audit_log(id DESC)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_refill_status ON refill_requests(status, id DESC)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_login_sessions_token ON login_sessions(token_hash, expires_at)")

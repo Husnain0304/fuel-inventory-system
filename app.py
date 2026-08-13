@@ -52,6 +52,10 @@ def remember_page():
     st.query_params["page"] = st.session_state["main_navigation"]
 
 
+if st.sidebar.button("⌂  Home · Command Centre", use_container_width=True, type="primary"):
+    st.session_state["main_navigation"] = "Command Centre"
+    st.query_params["page"] = "Command Centre"
+
 selected = st.sidebar.radio("WORKSPACE", labels, key="main_navigation", on_change=remember_page)
 page = menu[selected]
 st.sidebar.divider()
