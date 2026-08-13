@@ -1,212 +1,176 @@
 from datetime import date, timedelta
 
 import pandas as pd
-import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
-from ui import GREEN, RED, action_card, page_header, profile, stat_card
+from ui import GREEN, RED, page_header, profile, stat_card
 
 
 def _read(conn, query, params=None):
     return pd.read_sql_query(query, conn, params=params or [])
 
 
-def _empty_chart(message):
-    st.info(message)
-
-
-def _open_page(label):
+def _go(label):
     st.session_state["navigation_target"] = label
     st.rerun()
 
 
+def _launcher(title, description, destination, key, primary=False):
+    st.markdown(
+        f'<div class="launch-card"><div class="launch-title">{title}</div>'
+        f'<div class="launch-copy">{description}</div></div>', unsafe_allow_html=True
+    )
+    if st.button("Open workspace", key=key, type="primary" if primary else "secondary", use_container_width=True):
+        _go(destination)
+
+
 def render_dashboard(conn, truck_dict, truck_list):
     company = profile()
-    page_header("Operations Command Centre", "Start daily work, monitor inventory and act on exceptions from one place.")
+    user = st.session_state.get("user", "User")
+    today = date.today()
+    page_header("Command Centre", f"Welcome back, {user}. Everything requiring attention is organised here.")
 
-    st.markdown(f'<div class="eyebrow">{company["company_name"]} · Quick actions</div>', unsafe_allow_html=True)
-    actions = st.columns(6)
-    quick_actions = [
-        ("Record movement", "Fuel Operations", "Uplift or delivery"),
-        ("Transfer fuel", "Fuel Operations", "Safe truck transfer"),
-        ("View stock", "Fleet Inventory", "Balances by truck"),
-        ("Import data", "Integration Inbox", "Validate delivery file"),
-        ("Generate report", "Report Centre", "Analyse and download"),
-        ("Review audit", "Audit Centre", "Who changed what"),
+    hero_left, hero_right = st.columns([2.2, 1], gap="large")
+    with hero_left:
+        st.markdown(
+            '<div class="command-hero"><div class="hero-kicker">LIVE INVENTORY CONTROL</div>'
+            '<div class="hero-title">Run today’s fuel operations from one screen.</div>'
+            '<div class="hero-copy">Record movements, review stock, investigate exceptions and produce management information without searching through menus.</div>'
+            '</div>', unsafe_allow_html=True
+        )
+    with hero_right:
+        st.markdown(
+            f'<div class="today-panel"><div class="today-label">TODAY</div>'
+            f'<div class="today-date">{today:%d %B %Y}</div>'
+            f'<div class="today-company">{company["company_name"]} · {company["application_name"]}</div></div>',
+            unsafe_allow_html=True,
+        )
+
+    st.markdown('<div class="section-label">START AN OPERATION</div>', unsafe_allow_html=True)
+    action_columns = st.columns(4, gap="medium")
+    actions = [
+        ("Record fuel movement", "Post an uplift or delivery and review the resulting balance.", "Fuel Operations", "launch_movement", True),
+        ("Transfer inventory", "Move fuel safely between trucks with linked IN and OUT records.", "Fuel Operations", "launch_transfer", False),
+        ("Import delivery data", "Validate external delivery records before inventory is affected.", "Integration Inbox", "launch_import", False),
+        ("Generate a report", "Filter, analyse and download operational information.", "Report Centre", "launch_report", False),
     ]
-    for column, (title, destination, note) in zip(actions, quick_actions):
+    for column, details in zip(action_columns, actions):
         with column:
-            action_card(title, note)
-            if st.button("Open", key=f"quick_{destination}_{title}", use_container_width=True):
-                _open_page(destination)
-
-    st.write("")
-    menu_columns = st.columns(4)
-    menus = [
-        ("Fuel operations", [("Transactions and transfers", "Fuel Operations"), ("Truck ledger", "Truck Ledger")]),
-        ("Inventory control", [("Fleet inventory", "Fleet Inventory")]),
-        ("Management", [("Approvals", "Approvals"), ("Reports", "Report Centre"), ("Audit", "Audit Centre")]),
-        ("Data and setup", [("Integration inbox", "Integration Inbox"), ("Configuration", "Configuration")]),
-    ]
-    for index, (heading, links) in enumerate(menus):
-        with menu_columns[index]:
-            with st.popover(heading, use_container_width=True):
-                for caption, destination in links:
-                    if destination == "Configuration" and st.session_state.get("role") != "ADMIN":
-                        continue
-                    if st.button(caption, key=f"menu_{index}_{destination}", use_container_width=True):
-                        _open_page(destination)
-
-    controls = st.container(border=True)
-    with controls:
-        c1, c2, c3 = st.columns([1.2, 1.2, 2])
-        start = c1.date_input("From", date.today() - timedelta(days=30), key="exec_start")
-        end = c2.date_input("To", date.today(), key="exec_end")
-        selected = c3.multiselect("Fleet scope", truck_list, placeholder="All trucks", key="exec_trucks")
-
-    selected_ids = [truck_dict[name] for name in selected]
-    scope_sql = ""
-    params = [str(start), str(end)]
-    if selected_ids:
-        scope_sql = " AND tx.truck_id = ANY(%s)"
-        params.append(selected_ids)
-
-    summary = _read(
-        conn,
-        f"""
-        SELECT
-          COALESCE(SUM(CASE WHEN tx.type='IN' THEN tx.liters ELSE 0 END),0) AS total_in,
-          COALESCE(SUM(CASE WHEN tx.type='OUT' THEN tx.liters ELSE 0 END),0) AS total_out,
-          COUNT(*) AS transaction_count,
-          COUNT(DISTINCT tx.truck_id) AS active_trucks
-        FROM transactions tx
-        WHERE tx.date BETWEEN %s AND %s {scope_sql}
-        """,
-        params,
-    ).iloc[0]
-
-    balance_params = []
-    balance_scope = ""
-    if selected_ids:
-        balance_scope = " WHERE tx.truck_id = ANY(%s)"
-        balance_params = [selected_ids]
-    live_balance = _read(
-        conn,
-        f"""
-        SELECT COALESCE(SUM(CASE WHEN tx.type='IN' THEN tx.liters ELSE -tx.liters END),0) AS balance
-        FROM transactions tx {balance_scope}
-        """,
-        balance_params,
-    ).iloc[0]["balance"]
+            _launcher(*details)
 
     settings = _read(conn, "SELECT minimum_stock_level FROM settings ORDER BY id LIMIT 1")
-    minimum_stock = float(settings.iloc[0]["minimum_stock_level"] or 0) if not settings.empty else 0
+    minimum = float(settings.iloc[0]["minimum_stock_level"] or 0) if not settings.empty else 0
+    balances = _read(conn, """
+        SELECT tr.id, CONCAT(tr.emirate,' ',tr.plate_code,' ',tr.plate_number) AS truck,
+          COALESCE(SUM(CASE WHEN tx.type='IN' THEN tx.liters ELSE -tx.liters END),0) AS balance,
+          MAX(tx.date) AS last_movement
+        FROM trucks tr LEFT JOIN transactions tx ON tx.truck_id=tr.id
+        GROUP BY tr.id,tr.emirate,tr.plate_code,tr.plate_number ORDER BY balance ASC
+    """)
+    today_summary = _read(conn, """
+        SELECT COALESCE(SUM(CASE WHEN type='IN' THEN liters ELSE 0 END),0) AS total_in,
+               COALESCE(SUM(CASE WHEN type='OUT' THEN liters ELSE 0 END),0) AS total_out,
+               COUNT(*) AS movements
+        FROM transactions WHERE date=%s
+    """, [str(today)]).iloc[0]
+    live_stock = float(balances["balance"].sum()) if not balances.empty else 0
+    low_stock = balances[balances["balance"] <= minimum] if not balances.empty else balances
+    pending = int(_read(conn, "SELECT COUNT(*) AS count FROM refill_requests WHERE status='PENDING'").iloc[0]["count"])
 
-    cards = st.columns(4)
-    with cards[0]:
-        stat_card("Live fleet balance", f"{live_balance:,.0f} L", "Current inventory across selected fleet")
-    with cards[1]:
-        stat_card("Uplifted", f"{summary['total_in']:,.0f} L", f"{start:%d %b} – {end:%d %b}")
-    with cards[2]:
-        stat_card("Delivered", f"{summary['total_out']:,.0f} L", f"{int(summary['transaction_count']):,} recorded movements")
-    with cards[3]:
-        utilization = (summary["total_out"] / summary["total_in"] * 100) if summary["total_in"] else 0
-        stat_card("Fuel utilization", f"{utilization:,.1f}%", "Delivered as a share of uplifted fuel")
+    st.markdown('<div class="section-label">TODAY AT A GLANCE</div>', unsafe_allow_html=True)
+    metrics = st.columns(5)
+    metric_data = [
+        ("Live inventory", f"{live_stock:,.0f} L", f"Across {len(balances)} trucks"),
+        ("Received today", f"{today_summary['total_in']:,.0f} L", "Fuel IN"),
+        ("Delivered today", f"{today_summary['total_out']:,.0f} L", "Fuel OUT"),
+        ("Movements today", f"{int(today_summary['movements']):,}", "Posted records"),
+        ("Needs attention", f"{len(low_stock) + pending}", f"{len(low_stock)} stock · {pending} approvals"),
+    ]
+    for column, values in zip(metrics, metric_data):
+        with column:
+            stat_card(*values)
 
     st.write("")
-    trend, exceptions = st.columns([1.75, 1], gap="large")
-
-    with trend:
-        st.subheader("Fuel movement")
-        daily = _read(
-            conn,
-            f"""
-            SELECT tx.date,
-              SUM(CASE WHEN tx.type='IN' THEN tx.liters ELSE 0 END) AS uplifted,
-              SUM(CASE WHEN tx.type='OUT' THEN tx.liters ELSE 0 END) AS delivered
-            FROM transactions tx
-            WHERE tx.date BETWEEN %s AND %s {scope_sql}
-            GROUP BY tx.date ORDER BY tx.date
-            """,
-            params,
-        )
-        if daily.empty:
-            _empty_chart("No fuel movements in the selected period.")
+    main, side = st.columns([2.05, 1], gap="large")
+    with main:
+        heading, button = st.columns([4, 1])
+        heading.subheader("Live inventory")
+        if button.button("View fleet", use_container_width=True):
+            _go("Fleet Inventory")
+        if balances.empty:
+            st.info("No trucks have been registered yet.")
         else:
-            plot_df = daily.melt("date", value_vars=["uplifted", "delivered"], var_name="Movement", value_name="Liters")
-            plot_df["Movement"] = plot_df["Movement"].str.title()
-            fig = px.line(plot_df, x="date", y="Liters", color="Movement", markers=True,
-                          color_discrete_map={"Uplifted": RED, "Delivered": "#171717"})
-            fig.update_layout(height=330, margin=dict(l=10, r=10, t=15, b=10), legend_title_text="",
-                              plot_bgcolor="white", paper_bgcolor="white", hovermode="x unified")
+            view = balances.copy()
+            view["status"] = view["balance"].apply(lambda value: "Low stock" if value <= minimum else "Available")
+            view["share"] = view["balance"].clip(lower=0) / max(float(view["balance"].clip(lower=0).max()), 1)
+            st.dataframe(
+                view[["truck", "balance", "share", "last_movement", "status"]],
+                use_container_width=True, hide_index=True, height=340,
+                column_config={
+                    "truck": st.column_config.TextColumn("Truck"),
+                    "balance": st.column_config.NumberColumn("Current stock", format="%,.2f L"),
+                    "share": st.column_config.ProgressColumn("Relative position", min_value=0, max_value=1),
+                    "last_movement": st.column_config.TextColumn("Last movement"),
+                    "status": st.column_config.TextColumn("Status"),
+                },
+            )
+
+        st.subheader("30-day fuel movement")
+        start = today - timedelta(days=29)
+        trend = _read(conn, """
+            SELECT date,
+              SUM(CASE WHEN type='IN' THEN liters ELSE 0 END) AS received,
+              SUM(CASE WHEN type='OUT' THEN liters ELSE 0 END) AS delivered
+            FROM transactions WHERE date BETWEEN %s AND %s GROUP BY date ORDER BY date
+        """, [str(start), str(today)])
+        if trend.empty:
+            st.info("No movements recorded during the last 30 days.")
+        else:
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(x=trend["date"], y=trend["received"], name="Received", mode="lines",
+                                     line=dict(color=GREEN, width=3), fill="tozeroy", fillcolor="rgba(11,143,85,.08)"))
+            fig.add_trace(go.Scatter(x=trend["date"], y=trend["delivered"], name="Delivered", mode="lines",
+                                     line=dict(color=RED, width=3)))
+            fig.update_layout(height=300, margin=dict(l=8,r=8,t=15,b=5), paper_bgcolor="white",
+                              plot_bgcolor="white", legend=dict(orientation="h", y=1.1), hovermode="x unified")
             fig.update_xaxes(title="", showgrid=False)
-            fig.update_yaxes(title="Liters", gridcolor="#EEEAE7")
-            st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+            fig.update_yaxes(title="Litres", gridcolor="#EDF0F4")
+            st.plotly_chart(fig, use_container_width=True, config={"displayModeBar":False})
 
-    balances = _read(
-        conn,
-        """
-        SELECT tr.id, CONCAT(tr.emirate,' ',tr.plate_code,' ',tr.plate_number) AS truck,
-          COALESCE(SUM(CASE WHEN tx.type='IN' THEN tx.liters ELSE -tx.liters END),0) AS balance
-        FROM trucks tr LEFT JOIN transactions tx ON tx.truck_id=tr.id
-        GROUP BY tr.id, tr.emirate, tr.plate_code, tr.plate_number
-        ORDER BY balance ASC
-        """,
-    )
-    if selected_ids:
-        balances = balances[balances["id"].isin(selected_ids)]
-    low_stock = balances[balances["balance"] <= minimum_stock]
-
-    with exceptions:
-        st.subheader("Attention required")
-        pending = _read(conn, "SELECT COUNT(*) AS count FROM refill_requests WHERE status='PENDING'").iloc[0]["count"]
-        st.markdown(
-            f'<div class="fillit-alert"><b>{len(low_stock)} low-stock trucks</b><br>'
-            f'<span style="color:#777">At or below {minimum_stock:,.0f} L threshold</span></div>',
-            unsafe_allow_html=True,
-        )
-        st.write("")
-        st.markdown(
-            f'<div class="fillit-alert"><b>{int(pending)} approvals pending</b><br>'
-            '<span style="color:#777">Refill requests waiting for review</span></div>',
-            unsafe_allow_html=True,
-        )
-        st.write("")
-        if low_stock.empty:
-            st.success("All selected trucks are above the minimum stock level.")
+    with side:
+        st.subheader("Attention queue")
+        if low_stock.empty and pending == 0:
+            st.success("No urgent inventory actions are waiting.")
         else:
-            st.dataframe(low_stock[["truck", "balance"]].head(8), use_container_width=True, hide_index=True,
-                         column_config={"truck": "Truck", "balance": st.column_config.NumberColumn("Balance", format="%.0f L")})
+            if not low_stock.empty:
+                for _, row in low_stock.head(5).iterrows():
+                    st.markdown(f'<div class="queue-item critical"><div><b>{row["truck"]}</b><br>'
+                                f'<span>{row["balance"]:,.0f} L remaining</span></div><strong>LOW</strong></div>',
+                                unsafe_allow_html=True)
+            if pending:
+                st.markdown(f'<div class="queue-item warning"><div><b>Refill approvals</b><br>'
+                            f'<span>{pending} request(s) waiting</span></div><strong>REVIEW</strong></div>',
+                            unsafe_allow_html=True)
+        a1, a2 = st.columns(2)
+        if a1.button("Review stock", use_container_width=True):
+            _go("Fleet Inventory")
+        if a2.button("Approvals", use_container_width=True):
+            _go("Approvals")
 
-    st.divider()
-    inventory, activity = st.columns([1.35, 1], gap="large")
-
-    with inventory:
-        st.subheader("Fleet inventory position")
-        view = balances.sort_values("balance", ascending=True).tail(12)
-        if view.empty:
-            _empty_chart("No registered trucks available.")
+        st.subheader("Recent timeline")
+        timeline = _read(conn, """
+            SELECT timestamp, "user", action FROM audit_log ORDER BY id DESC LIMIT 8
+        """)
+        if timeline.empty:
+            st.caption("No activity has been recorded.")
         else:
-            colors = [RED if value <= minimum_stock else GREEN for value in view["balance"]]
-            fig = go.Figure(go.Bar(x=view["balance"], y=view["truck"], orientation="h", marker_color=colors,
-                                   text=[f"{v:,.0f} L" for v in view["balance"]], textposition="outside"))
-            fig.update_layout(height=max(330, len(view) * 34), margin=dict(l=5, r=55, t=5, b=10),
-                              plot_bgcolor="white", paper_bgcolor="white", xaxis_title="Liters")
-            fig.update_xaxes(gridcolor="#EEEAE7")
-            fig.update_yaxes(title="")
-            st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+            for _, event in timeline.iterrows():
+                stamp = pd.to_datetime(event["timestamp"]).strftime("%d %b · %H:%M")
+                st.markdown(f'<div class="timeline-row"><div class="timeline-dot"></div><div>'
+                            f'<b>{event["user"]}</b><span>{event["action"]}</span><small>{stamp}</small></div></div>',
+                            unsafe_allow_html=True)
+        if st.button("Open complete audit", use_container_width=True):
+            _go("Audit Centre")
 
-    with activity:
-        st.subheader("Latest activity")
-        latest = _read(
-            conn,
-            'SELECT timestamp AS "Date & Time", "user" AS "User", action AS "Action" '
-            "FROM audit_log ORDER BY id DESC LIMIT 12",
-        )
-        if latest.empty:
-            st.info("No recorded activity yet.")
-        else:
-            st.dataframe(latest, use_container_width=True, hide_index=True, height=390)
-
-    st.caption("FILLIT corporate fuel operations · Data refreshes when the page is opened or filters change.")
+    st.caption(f"{company['application_name']} · Live operational view · Updated when this page refreshes")
