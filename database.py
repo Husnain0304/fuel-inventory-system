@@ -272,6 +272,7 @@ def init_db(_conn) -> bool:
             "ALTER TABLE transactions ADD COLUMN IF NOT EXISTS reversed_by_transaction_id INTEGER",
             "ALTER TABLE transactions ADD COLUMN IF NOT EXISTS correction_of_transaction_id INTEGER",
             "ALTER TABLE transactions ADD COLUMN IF NOT EXISTS change_reason TEXT",
+            "ALTER TABLE transactions ADD COLUMN IF NOT EXISTS tank_transaction_id BIGINT",
             "ALTER TABLE trucks ADD COLUMN IF NOT EXISTS product_id INTEGER REFERENCES products(id)",
             "ALTER TABLE trucks ADD COLUMN IF NOT EXISTS capacity_liters REAL",
             "ALTER TABLE trucks ADD COLUMN IF NOT EXISTS minimum_stock_liters REAL",
@@ -310,6 +311,18 @@ def init_db(_conn) -> bool:
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_transactions_record_status ON transactions(record_status, id DESC)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_tanks_depot ON storage_tanks(depot_id, status)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_tank_transactions_tank_time ON tank_transactions(tank_id, movement_at DESC)")
+        tank_migrations = (
+            "ALTER TABLE tank_transactions ADD COLUMN IF NOT EXISTS supplier_id INTEGER REFERENCES suppliers(id)",
+            "ALTER TABLE tank_transactions ADD COLUMN IF NOT EXISTS transport_method TEXT",
+            "ALTER TABLE tank_transactions ADD COLUMN IF NOT EXISTS vehicle_number TEXT",
+            "ALTER TABLE tank_transactions ADD COLUMN IF NOT EXISTS driver_name TEXT",
+            "ALTER TABLE tank_transactions ADD COLUMN IF NOT EXISTS ordered_liters REAL",
+            "ALTER TABLE tank_transactions ADD COLUMN IF NOT EXISTS dispatched_liters REAL",
+            "ALTER TABLE tank_transactions ADD COLUMN IF NOT EXISTS accepted_liters REAL",
+            "ALTER TABLE tank_transactions ADD COLUMN IF NOT EXISTS variance_liters REAL",
+        )
+        for statement in tank_migrations:
+            cursor.execute(statement)
 
         cursor.execute("SELECT COUNT(*) FROM users")
         if cursor.fetchone()[0] == 0:
