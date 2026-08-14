@@ -192,9 +192,14 @@ def render_reconciliation(conn):
             if statuses: view = view[view["status"].isin(statuses)]
             if trucks_selected: view = view[view["truck"].isin(trucks_selected)]
             st.dataframe(view, use_container_width=True, hide_index=True, height=430)
+            export_view = view.copy()
+            for column in ("reading_at", "recorded_at", "reviewed_at"):
+                if column in export_view.columns:
+                    converted = pd.to_datetime(export_view[column], errors="coerce", utc=True)
+                    export_view[column] = converted.dt.tz_convert("Asia/Dubai").dt.tz_localize(None)
             buffer = io.BytesIO()
             with pd.ExcelWriter(buffer,engine="openpyxl") as writer:
-                view.to_excel(writer,index=False,sheet_name="Reconciliations")
+                export_view.to_excel(writer,index=False,sheet_name="Reconciliations")
             st.download_button("Download reconciliation report",buffer.getvalue(),
                                f"reconciliation_report_{datetime.now():%Y%m%d_%H%M%S}.xlsx",
                                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
