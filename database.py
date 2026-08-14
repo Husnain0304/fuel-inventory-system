@@ -4,11 +4,9 @@ from threading import RLock
 from security import hash_password
 
 
+@st.cache_resource(show_spinner=False)
 def _connection_manager():
-    key = "_database_connection_manager_v2"
-    if key not in st.session_state:
-        st.session_state[key] = ConnectionManager(st.secrets["connections"]["postgresql"]["url"])
-    return st.session_state[key]
+    return ConnectionManager(st.secrets["connections"]["postgresql"]["url"])
 
 
 class ConnectionManager:
@@ -57,7 +55,6 @@ class ConnectionManager:
             keepalives_idle=30,
             keepalives_interval=10,
             keepalives_count=5,
-            options="-c statement_timeout=30000 -c idle_in_transaction_session_timeout=30000",
         )
 
 
