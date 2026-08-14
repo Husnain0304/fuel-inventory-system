@@ -203,6 +203,36 @@ def init_db(_conn) -> bool:
             reversal_transaction_id INTEGER REFERENCES transactions(id),
             replacement_transaction_id INTEGER REFERENCES transactions(id)
         )""")
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS depots (
+            id SERIAL PRIMARY KEY, code TEXT UNIQUE NOT NULL, name TEXT NOT NULL,
+            address TEXT, emirate TEXT, manager_name TEXT, phone TEXT,
+            latitude REAL, longitude REAL, status TEXT NOT NULL DEFAULT 'ACTIVE',
+            notes TEXT, created_by TEXT, created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+        )""")
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS storage_tanks (
+            id SERIAL PRIMARY KEY, depot_id INTEGER NOT NULL REFERENCES depots(id),
+            code TEXT NOT NULL, name TEXT NOT NULL, product_id INTEGER NOT NULL REFERENCES products(id),
+            capacity_liters REAL NOT NULL CHECK(capacity_liters > 0),
+            safe_capacity_liters REAL NOT NULL CHECK(safe_capacity_liters > 0),
+            minimum_stock_liters REAL NOT NULL DEFAULT 0,
+            reorder_level_liters REAL NOT NULL DEFAULT 0,
+            dead_stock_liters REAL NOT NULL DEFAULT 0,
+            status TEXT NOT NULL DEFAULT 'AVAILABLE', notes TEXT,
+            created_by TEXT, created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(depot_id, code)
+        )""")
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS tank_transactions (
+            id BIGSERIAL PRIMARY KEY, tank_id INTEGER NOT NULL REFERENCES storage_tanks(id),
+            movement_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            liters REAL NOT NULL CHECK(liters > 0), type TEXT NOT NULL CHECK(type IN ('IN','OUT')),
+            movement_category TEXT NOT NULL DEFAULT 'STANDARD', product_id INTEGER REFERENCES products(id),
+            partner_tank_transaction_id BIGINT, truck_transaction_id INTEGER,
+            reference TEXT, notes TEXT, created_by TEXT,
+            record_status TEXT NOT NULL DEFAULT 'POSTED', created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+        )""")
 
         cursor.execute("""
             INSERT INTO company_profile
@@ -278,6 +308,8 @@ def init_db(_conn) -> bool:
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_reconciliation_truck ON stock_reconciliations(truck_id, reading_at DESC)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_change_requests_status ON transaction_change_requests(status, requested_at DESC)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_transactions_record_status ON transactions(record_status, id DESC)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_tanks_depot ON storage_tanks(depot_id, status)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_tank_transactions_tank_time ON tank_transactions(tank_id, movement_at DESC)")
 
         cursor.execute("SELECT COUNT(*) FROM users")
         if cursor.fetchone()[0] == 0:

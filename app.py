@@ -10,6 +10,7 @@ from ledger import render_ledger
 from reconciliation import render_reconciliation
 from reports import render_reports
 from settings import render_settings
+from storage import render_storage
 from transactions import render_transactions
 from transaction_control import render_transaction_control
 from trucks import render_trucks
@@ -32,6 +33,7 @@ menu = {
     "Fleet Inventory": "Manage Trucks",
     "Inventory Control": "Reconciliation",
     "Transaction Control": "Transaction Control",
+    "Depots & Storage": "Storage",
     "Truck Ledger": "Ledger",
     "Integration Inbox": "Bulk Upload",
     "Approvals": "Refill Approvals",
@@ -84,6 +86,8 @@ elif page == "Reconciliation":
     render_reconciliation(conn)
 elif page == "Transaction Control":
     render_transaction_control(conn)
+elif page == "Storage":
+    render_storage(conn)
 elif page == "Reports":
     page_header("Report Centre", "Review, filter and export inventory and operational performance.")
     render_reports(conn, truck_dict, truck_list)
