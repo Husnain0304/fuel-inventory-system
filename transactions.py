@@ -198,7 +198,9 @@ def edit_transaction_dialog(conn, cursor, tx_item, supplier_dict):
     supplier_list = list(supplier_dict.keys())
     current_supplier = tx_item['supplier_name'] if tx_item['supplier_name'] in supplier_list else (supplier_list[0] if supplier_list else None)
     
-    if tx_item['type'] == 'IN' and not tx_item['transfer_partner_id']:
+    has_transfer_partner = pd.notna(tx_item.get('transfer_partner_id'))
+
+    if tx_item['type'] == 'IN' and not has_transfer_partner:
         new_supplier = st.selectbox("Supplier", supplier_list, index=supplier_list.index(current_supplier) if current_supplier in supplier_list else 0)
         new_supplier_id = supplier_dict.get(new_supplier)
     else:
@@ -209,7 +211,7 @@ def edit_transaction_dialog(conn, cursor, tx_item, supplier_dict):
             cursor.execute("SELECT id FROM transactions WHERE id=%s FOR UPDATE", (tx_item['id'],))
             if not cursor.fetchone():
                 raise ValueError("This transaction no longer exists.")
-            partner_id = tx_item['transfer_partner_id']
+            partner_id = int(tx_item['transfer_partner_id']) if has_transfer_partner else None
             if partner_id:
                 cursor.execute(
                     "SELECT id, transfer_partner_id FROM transactions WHERE id=%s FOR UPDATE",
@@ -728,7 +730,7 @@ def render_transactions(conn, cursor, truck_dict, truck_list):
                     col2.write(f"🚛 {item['truck']}")
                     col3.write(f"**{item['liters']:,.2f} L**")
                     
-                    if item['transfer_partner_id']:
+                    if pd.notna(item['transfer_partner_id']):
                         ctx = f"🔄 Transfer ({'IN' if item['type']=='IN' else 'OUT'}) linked to TX-{int(item['transfer_partner_id'])}"
                     else:
                         ctx = f"📥 Uplift [{item['supplier_name']}]" if item['type'] == 'IN' else "📤 Delivery"
