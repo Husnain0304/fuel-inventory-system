@@ -8,6 +8,49 @@ from audit import record_event
 from ui import page_header
 
 
+def ensure_transaction_control_schema(conn):
+    """Idempotent local migration so hot Streamlit deploys cannot skip required columns."""
+    cursor = conn.cursor()
+    try:
+        statements = (
+            "ALTER TABLE transactions ADD COLUMN IF NOT EXISTS record_status TEXT DEFAULT 'POSTED'",
+            "ALTER TABLE transactions ADD COLUMN IF NOT EXISTS reversal_of_transaction_id INTEGER",
+            "ALTER TABLE transactions ADD COLUMN IF NOT EXISTS reversed_by_transaction_id INTEGER",
+            "ALTER TABLE transactions ADD COLUMN IF NOT EXISTS correction_of_transaction_id INTEGER",
+            "ALTER TABLE transactions ADD COLUMN IF NOT EXISTS change_reason TEXT",
+        )
+        for statement in statements:
+            cursor.execute(statement)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS transaction_change_requests (
+                id BIGSERIAL PRIMARY KEY,
+                transaction_id INTEGER NOT NULL REFERENCES transactions(id),
+                partner_transaction_id INTEGER REFERENCES transactions(id),
+                request_type TEXT NOT NULL CHECK(request_type IN ('CORRECTION','REVERSAL')),
+                reason TEXT NOT NULL,
+                proposed_date TEXT,
+                proposed_liters REAL,
+                proposed_supplier_id INTEGER REFERENCES suppliers(id),
+                status TEXT NOT NULL DEFAULT 'PENDING'
+                    CHECK(status IN ('PENDING','APPROVED','REJECTED','POSTED','CANCELLED')),
+                requested_by TEXT NOT NULL,
+                requested_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                reviewed_by TEXT,
+                reviewed_at TIMESTAMPTZ,
+                review_comment TEXT,
+                reversal_transaction_id INTEGER REFERENCES transactions(id),
+                replacement_transaction_id INTEGER REFERENCES transactions(id)
+            )
+        """)
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_change_requests_status ON transaction_change_requests(status, requested_at DESC)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_transactions_record_status ON transactions(record_status, id DESC)")
+        cursor.execute("UPDATE transactions SET record_status='POSTED' WHERE record_status IS NULL")
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+
+
 def _transactions(conn):
     return pd.read_sql_query("""
         SELECT tx.id,tx.date,tx.truck_id,CONCAT(t.emirate,' ',t.plate_code,' ',t.plate_number) AS truck,
@@ -118,6 +161,7 @@ def _post_request(conn, request_id, reviewer, comment):
 
 
 def render_transaction_control(conn):
+    ensure_transaction_control_schema(conn)
     page_header("Transaction Control","Correct or reverse inventory movements without deleting the original record.")
     transactions = _transactions(conn)
     requests = _requests(conn)
