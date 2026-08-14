@@ -3,6 +3,19 @@ import pandas as pd
 from datetime import datetime
 import io  # Required for in-memory Excel file generation
 
+
+def normalize_partner_id(value):
+    """Return a safe integer partner ID, or None for any empty/legacy value."""
+    try:
+        if value is None or pd.isna(value):
+            return None
+        text = str(value).strip().lower()
+        if text in ("", "nan", "none", "null", "<na>"):
+            return None
+        return int(float(text))
+    except (TypeError, ValueError, OverflowError):
+        return None
+
 def auto_setup_db(cursor, conn):
     # Schema migrations are centralized and cached in database.init_db.
     cursor.execute("INSERT INTO suppliers (name) VALUES ('Default Supplier') ON CONFLICT (name) DO NOTHING")
@@ -198,7 +211,8 @@ def edit_transaction_dialog(conn, cursor, tx_item, supplier_dict):
     supplier_list = list(supplier_dict.keys())
     current_supplier = tx_item['supplier_name'] if tx_item['supplier_name'] in supplier_list else (supplier_list[0] if supplier_list else None)
     
-    has_transfer_partner = pd.notna(tx_item.get('transfer_partner_id'))
+    partner_id = normalize_partner_id(tx_item.get('transfer_partner_id'))
+    has_transfer_partner = partner_id is not None
 
     if tx_item['type'] == 'IN' and not has_transfer_partner:
         new_supplier = st.selectbox("Supplier", supplier_list, index=supplier_list.index(current_supplier) if current_supplier in supplier_list else 0)
@@ -211,7 +225,6 @@ def edit_transaction_dialog(conn, cursor, tx_item, supplier_dict):
             cursor.execute("SELECT id FROM transactions WHERE id=%s FOR UPDATE", (tx_item['id'],))
             if not cursor.fetchone():
                 raise ValueError("This transaction no longer exists.")
-            partner_id = int(tx_item['transfer_partner_id']) if has_transfer_partner else None
             if partner_id:
                 cursor.execute(
                     "SELECT id, transfer_partner_id FROM transactions WHERE id=%s FOR UPDATE",
@@ -730,8 +743,9 @@ def render_transactions(conn, cursor, truck_dict, truck_list):
                     col2.write(f"🚛 {item['truck']}")
                     col3.write(f"**{item['liters']:,.2f} L**")
                     
-                    if pd.notna(item['transfer_partner_id']):
-                        ctx = f"🔄 Transfer ({'IN' if item['type']=='IN' else 'OUT'}) linked to TX-{int(item['transfer_partner_id'])}"
+                    partner_id = normalize_partner_id(item.get('transfer_partner_id'))
+                    if partner_id is not None:
+                        ctx = f"🔄 Transfer ({'IN' if item['type']=='IN' else 'OUT'}) linked to TX-{partner_id}"
                     else:
                         ctx = f"📥 Uplift [{item['supplier_name']}]" if item['type'] == 'IN' else "📤 Delivery"
                     
