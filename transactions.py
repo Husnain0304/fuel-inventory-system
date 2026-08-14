@@ -256,6 +256,8 @@ def edit_transaction_dialog(conn, cursor, tx_item, supplier_dict):
 
 @st.dialog("⚠️ Confirm Bulk Delete")
 def confirm_bulk_delete_dialog(conn, cursor, truck_id, truck_name, start_date, end_date, supplier_id=None):
+    st.error("Permanent transaction deletion is disabled. Use Transaction Control to request a traceable reversal.")
+    return
     st.warning(f"Are you sure you want to delete transactions for **{truck_name}** between **{start_date}** and **{end_date}**?")
     
     if supplier_id:
@@ -299,6 +301,8 @@ def confirm_bulk_delete_dialog(conn, cursor, truck_id, truck_name, start_date, e
 
 @st.dialog("⚠️ CONFIRM CLEAR ALL IN (UPLIFT) DATA")
 def confirm_clear_in_dialog(conn, cursor):
+    st.error("Permanent transaction deletion is disabled. Use Transaction Control to request a traceable reversal.")
+    return
     cursor.execute("SELECT COUNT(*) FROM transactions WHERE type = 'IN' AND transfer_partner_id IS NULL")
     count = cursor.fetchone()[0]
     
@@ -318,6 +322,8 @@ def confirm_clear_in_dialog(conn, cursor):
 
 @st.dialog("⚠️ CONFIRM CLEAR ALL OUT (DELIVERY) DATA")
 def confirm_clear_out_dialog(conn, cursor):
+    st.error("Permanent transaction deletion is disabled. Use Transaction Control to request a traceable reversal.")
+    return
     cursor.execute("SELECT COUNT(*) FROM transactions WHERE type = 'OUT' AND transfer_partner_id IS NULL")
     count = cursor.fetchone()[0]
     
@@ -756,15 +762,12 @@ def render_transactions(conn, cursor, truck_dict, truck_list):
                     edit_col, del_col = col7.columns(2)
                     
                     if edit_col.button("✏️", key=f"edit_{item['id']}"):
-                        edit_transaction_dialog(conn, cursor, item, supplier_dict)
+                        st.session_state["navigation_target"] = "Transaction Control"
+                        st.rerun()
 
                     if del_col.button("🗑️", key=f"del_{item['id']}"):
-                        try:
-                            deleted_ids = delete_transaction_safely(conn, int(item['id']), active_user)
-                            st.toast("Deleted " + " and ".join(f"TX-{value}" for value in deleted_ids) + " safely.")
-                            st.rerun()
-                        except Exception as error:
-                            st.error(str(error))
+                        st.session_state["navigation_target"] = "Transaction Control"
+                        st.rerun()
 
     # ==========================================
     # TAB 5: SYSTEM AUDIT LOG VIEWER

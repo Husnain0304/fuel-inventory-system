@@ -11,6 +11,7 @@ from reconciliation import render_reconciliation
 from reports import render_reports
 from settings import render_settings
 from transactions import render_transactions
+from transaction_control import render_transaction_control
 from trucks import render_trucks
 from ui import apply_theme, page_header, render_sidebar_brand
 from users_admin import render_user_management
@@ -30,6 +31,7 @@ menu = {
     "Fuel Operations": "Transactions",
     "Fleet Inventory": "Manage Trucks",
     "Inventory Control": "Reconciliation",
+    "Transaction Control": "Transaction Control",
     "Truck Ledger": "Ledger",
     "Integration Inbox": "Bulk Upload",
     "Approvals": "Refill Approvals",
@@ -80,6 +82,8 @@ elif page == "Manage Trucks":
     render_trucks(conn, cursor)
 elif page == "Reconciliation":
     render_reconciliation(conn)
+elif page == "Transaction Control":
+    render_transaction_control(conn)
 elif page == "Reports":
     page_header("Report Centre", "Review, filter and export inventory and operational performance.")
     render_reports(conn, truck_dict, truck_list)

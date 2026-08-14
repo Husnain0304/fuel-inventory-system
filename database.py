@@ -183,6 +183,26 @@ def init_db(_conn) -> bool:
             posted_at TIMESTAMPTZ,
             UNIQUE(adjustment_transaction_id)
         )""")
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS transaction_change_requests (
+            id BIGSERIAL PRIMARY KEY,
+            transaction_id INTEGER NOT NULL REFERENCES transactions(id),
+            partner_transaction_id INTEGER REFERENCES transactions(id),
+            request_type TEXT NOT NULL CHECK(request_type IN ('CORRECTION','REVERSAL')),
+            reason TEXT NOT NULL,
+            proposed_date TEXT,
+            proposed_liters REAL,
+            proposed_supplier_id INTEGER REFERENCES suppliers(id),
+            status TEXT NOT NULL DEFAULT 'PENDING'
+                CHECK(status IN ('PENDING','APPROVED','REJECTED','POSTED','CANCELLED')),
+            requested_by TEXT NOT NULL,
+            requested_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            reviewed_by TEXT,
+            reviewed_at TIMESTAMPTZ,
+            review_comment TEXT,
+            reversal_transaction_id INTEGER REFERENCES transactions(id),
+            replacement_transaction_id INTEGER REFERENCES transactions(id)
+        )""")
 
         cursor.execute("""
             INSERT INTO company_profile
@@ -217,6 +237,11 @@ def init_db(_conn) -> bool:
             "ALTER TABLE transactions ADD COLUMN IF NOT EXISTS product_id INTEGER REFERENCES products(id)",
             "ALTER TABLE transactions ADD COLUMN IF NOT EXISTS movement_category TEXT DEFAULT 'STANDARD'",
             "ALTER TABLE transactions ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP",
+            "ALTER TABLE transactions ADD COLUMN IF NOT EXISTS record_status TEXT DEFAULT 'POSTED'",
+            "ALTER TABLE transactions ADD COLUMN IF NOT EXISTS reversal_of_transaction_id INTEGER",
+            "ALTER TABLE transactions ADD COLUMN IF NOT EXISTS reversed_by_transaction_id INTEGER",
+            "ALTER TABLE transactions ADD COLUMN IF NOT EXISTS correction_of_transaction_id INTEGER",
+            "ALTER TABLE transactions ADD COLUMN IF NOT EXISTS change_reason TEXT",
             "ALTER TABLE trucks ADD COLUMN IF NOT EXISTS product_id INTEGER REFERENCES products(id)",
             "ALTER TABLE trucks ADD COLUMN IF NOT EXISTS capacity_liters REAL",
             "ALTER TABLE trucks ADD COLUMN IF NOT EXISTS minimum_stock_liters REAL",
@@ -251,6 +276,8 @@ def init_db(_conn) -> bool:
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_audit_events_user ON audit_events(username, occurred_at DESC)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_reconciliation_status ON stock_reconciliations(status, recorded_at DESC)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_reconciliation_truck ON stock_reconciliations(truck_id, reading_at DESC)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_change_requests_status ON transaction_change_requests(status, requested_at DESC)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_transactions_record_status ON transactions(record_status, id DESC)")
 
         cursor.execute("SELECT COUNT(*) FROM users")
         if cursor.fetchone()[0] == 0:
