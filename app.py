@@ -10,6 +10,7 @@ from ledger import render_ledger
 from reconciliation import render_reconciliation
 from procurement import render_procurement
 from forecasting import render_forecasting
+from master_reports import render_master_reports
 from reports import render_reports
 from settings import render_settings
 from storage import render_storage
@@ -101,8 +102,7 @@ elif page == "Procurement":
 elif page == "Forecasting":
     render_forecasting(conn)
 elif page == "Reports":
-    page_header("Report Centre", "Review, filter and export inventory and operational performance.")
-    render_reports(conn, truck_dict, truck_list)
+    render_master_reports(conn)
 elif page == "Ledger":
     page_header("Truck Ledger", "Trace every movement and running balance by vehicle.")
     render_ledger(conn, truck_dict, truck_list)
