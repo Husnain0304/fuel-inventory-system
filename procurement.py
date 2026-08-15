@@ -47,6 +47,8 @@ def ensure_procurement_schema(conn):
             "ALTER TABLE tank_transactions ADD COLUMN IF NOT EXISTS booking_release_id BIGINT REFERENCES procurement_releases(id)",
             "ALTER TABLE tank_transactions ADD COLUMN IF NOT EXISTS purchase_type TEXT",
             "ALTER TABLE tank_transactions ADD COLUMN IF NOT EXISTS unit_price REAL",
+            "ALTER TABLE procurement_releases ADD COLUMN IF NOT EXISTS destination_depot_id INTEGER REFERENCES depots(id)",
+            "ALTER TABLE procurement_releases ADD COLUMN IF NOT EXISTS destination_tank_id INTEGER REFERENCES storage_tanks(id)",
         ):
             cursor.execute(statement)
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_booking_supplier_status ON procurement_bookings(supplier_id,status)")
@@ -183,13 +185,15 @@ def render_procurement(conn):
         else:
             booking_map=dict(zip(bookings["label"],bookings["id"])); selected=st.selectbox("Booking",list(booking_map)); row=bookings[bookings["id"]==booking_map[selected]].iloc[0]
             st.info(f"Remaining booking balance: {row['remaining_liters']:,.2f} L")
+            destinations=pd.read_sql_query("""SELECT t.id,t.depot_id,CONCAT(d.code,' · ',t.code,' · ',t.name) AS label FROM storage_tanks t JOIN depots d ON d.id=t.depot_id WHERE t.product_id=%s AND t.status<>'OUT_OF_SERVICE' ORDER BY d.code,t.code""",conn,params=[int(row["product_id"])]); destination_map=dict(zip(destinations["label"],destinations["id"]))
             with st.form("new_release"):
-                a,b=st.columns(2); number=a.text_input("Release number"); planned=b.date_input("Planned delivery / collection date",date.today()); liters=st.number_input("Release quantity",min_value=0.0,max_value=float(row["remaining_liters"])); notes=st.text_area("Release notes"); submit=st.form_submit_button("Create release",type="primary")
+                a,b=st.columns(2); number=a.text_input("Release number"); planned=b.date_input("Planned delivery / collection date",date.today()); destination=st.selectbox("Planned destination tank",["Not allocated yet"]+list(destination_map)); liters=st.number_input("Release quantity",min_value=0.0,max_value=float(row["remaining_liters"])); notes=st.text_area("Release notes"); submit=st.form_submit_button("Create release",type="primary")
             if submit:
                 if not number.strip() or liters<=0: st.error("Release number and quantity are required.")
                 else:
                     try:
-                        cur=conn.cursor(); cur.execute("""INSERT INTO procurement_releases(booking_id,release_number,release_date,planned_delivery_date,released_liters,notes,created_by) VALUES (%s,%s,CURRENT_DATE,%s,%s,%s,%s) RETURNING id""",(int(row["id"]),number.strip(),planned,liters,notes or None,user)); release_id=cur.fetchone()[0]; conn.commit(); record_event(conn,"CREATE_RELEASE","Procurement","Booking Release",release_id,f"Released {liters:,.2f} L against {row['booking_number']}"); st.success(f"Release RL-{release_id} created."); st.rerun()
+                        tank_id=None if destination=="Not allocated yet" else int(destination_map[destination]); depot_id=None if tank_id is None else int(destinations[destinations["id"]==tank_id].iloc[0]["depot_id"])
+                        cur=conn.cursor(); cur.execute("""INSERT INTO procurement_releases(booking_id,release_number,release_date,planned_delivery_date,released_liters,destination_depot_id,destination_tank_id,notes,created_by) VALUES (%s,%s,CURRENT_DATE,%s,%s,%s,%s,%s,%s) RETURNING id""",(int(row["id"]),number.strip(),planned,liters,depot_id,tank_id,notes or None,user)); release_id=cur.fetchone()[0]; conn.commit(); record_event(conn,"CREATE_RELEASE","Procurement","Booking Release",release_id,f"Released {liters:,.2f} L against {row['booking_number']}"); st.success(f"Release RL-{release_id} created."); st.rerun()
                     except Exception as error: conn.rollback(); st.error(str(error))
     with tab_overview:
         all_bookings=pd.read_sql_query("""SELECT b.id,b.booking_number,s.name AS supplier,p.name AS product,b.booking_date,b.valid_to,b.booked_liters,b.unit_price,b.payment_terms,b.transport_responsibility,b.status,COALESCE(SUM(tx.accepted_liters),0) AS received_liters,b.booked_liters-COALESCE(SUM(tx.accepted_liters),0) AS remaining_liters,b.created_by FROM procurement_bookings b JOIN suppliers s ON s.id=b.supplier_id JOIN products p ON p.id=b.product_id LEFT JOIN tank_transactions tx ON tx.booking_id=b.id GROUP BY b.id,s.name,p.name ORDER BY b.id DESC""",conn)
