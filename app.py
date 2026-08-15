@@ -8,6 +8,7 @@ from dashboard import render_dashboard
 from database import get_connection, init_db
 from ledger import render_ledger
 from reconciliation import render_reconciliation
+from procurement import render_procurement
 from reports import render_reports
 from settings import render_settings
 from storage import render_storage
@@ -36,6 +37,7 @@ menu = {
     "Transaction Control": "Transaction Control",
     "Depots & Storage": "Storage",
     "Storage Operations": "Storage Operations",
+    "Supplier Procurement": "Procurement",
     "Truck Ledger": "Ledger",
     "Integration Inbox": "Bulk Upload",
     "Approvals": "Refill Approvals",
@@ -92,6 +94,8 @@ elif page == "Storage":
     render_storage(conn)
 elif page == "Storage Operations":
     render_storage_operations(conn)
+elif page == "Procurement":
+    render_procurement(conn)
 elif page == "Reports":
     page_header("Report Centre", "Review, filter and export inventory and operational performance.")
     render_reports(conn, truck_dict, truck_list)

@@ -10,6 +10,7 @@ from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.table import Table, TableStyleInfo
 
 from audit import record_event
+from procurement import booking_options, create_variance_claim, ensure_procurement_schema, refresh_booking_status, release_options
 from ui import page_header
 
 
@@ -363,7 +364,8 @@ def _truck_balance(cursor,truck_id):
     return float(cursor.fetchone()[0] or 0)
 
 
-def post_supplier_receipt(conn,tank_id,movement_at,ordered,dispatched,accepted,supplier_id,method,vehicle,driver,reference,notes,user):
+def post_supplier_receipt(conn,tank_id,movement_at,ordered,dispatched,accepted,supplier_id,method,vehicle,driver,reference,notes,user,
+                          purchase_type="Credit purchase",booking_id=None,release_id=None,unit_price=0.0):
     cursor=conn.cursor()
     try:
         cursor.execute("SELECT product_id,safe_capacity_liters,status FROM storage_tanks WHERE id=%s FOR UPDATE",(tank_id,)); tank=cursor.fetchone()
@@ -372,12 +374,27 @@ def post_supplier_receipt(conn,tank_id,movement_at,ordered,dispatched,accepted,s
         balance=_tank_balance(cursor,tank_id)
         if accepted<=0: raise ValueError("Accepted quantity must be greater than zero.")
         if balance+accepted>float(tank[1])+0.001: raise ValueError(f"Safe capacity exceeded. Available: {max(float(tank[1])-balance,0):,.2f} L.")
+        if purchase_type=="Advance booking":
+            if not booking_id: raise ValueError("Select the supplier booking used for this receipt.")
+            cursor.execute("""SELECT supplier_id,product_id,status,booked_liters-COALESCE((SELECT SUM(accepted_liters) FROM tank_transactions WHERE booking_id=%s),0)
+                FROM procurement_bookings WHERE id=%s FOR UPDATE""",(booking_id,booking_id)); booking=cursor.fetchone()
+            if not booking or booking[2] not in ("OPEN","PARTIALLY_USED"): raise ValueError("The selected booking is no longer open.")
+            if int(booking[0])!=int(supplier_id) or int(booking[1])!=int(tank[0]): raise ValueError("Booking supplier or product does not match this receipt.")
+            if accepted>float(booking[3] or 0)+0.005: raise ValueError(f"Accepted quantity exceeds booking balance of {float(booking[3] or 0):,.2f} L.")
+            if release_id:
+                cursor.execute("""SELECT booking_id,status,released_liters-COALESCE((SELECT SUM(accepted_liters) FROM tank_transactions WHERE booking_release_id=%s),0)
+                    FROM procurement_releases WHERE id=%s FOR UPDATE""",(release_id,release_id)); release=cursor.fetchone()
+                if not release or int(release[0])!=int(booking_id) or release[1] not in ("OPEN","PARTIALLY_RECEIVED"): raise ValueError("The selected booking release is no longer open.")
+                if accepted>float(release[2] or 0)+0.005: raise ValueError(f"Accepted quantity exceeds release balance of {float(release[2] or 0):,.2f} L.")
         variance=accepted-dispatched
         cursor.execute("""INSERT INTO tank_transactions(tank_id,movement_at,liters,type,movement_category,product_id,
             supplier_id,transport_method,vehicle_number,driver_name,ordered_liters,dispatched_liters,accepted_liters,
-            variance_liters,reference,notes,created_by) VALUES (%s,%s,%s,'IN','SUPPLIER_RECEIPT',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id""",
-            (tank_id,movement_at,accepted,tank[0],supplier_id,method,vehicle or None,driver or None,ordered,dispatched,accepted,variance,reference,notes or None,user))
-        tx_id=cursor.fetchone()[0]; cursor.execute('INSERT INTO audit_log ("user",action,timestamp) VALUES (%s,%s,CURRENT_TIMESTAMP)',(user,f"RECEIVED {accepted:,.2f} L into tank; STX-{tx_id}")); conn.commit()
+            variance_liters,reference,notes,created_by,purchase_type,booking_id,booking_release_id,unit_price)
+            VALUES (%s,%s,%s,'IN','SUPPLIER_RECEIPT',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id""",
+            (tank_id,movement_at,accepted,tank[0],supplier_id,method,vehicle or None,driver or None,ordered,dispatched,accepted,variance,reference,notes or None,user,purchase_type,booking_id,release_id,unit_price))
+        tx_id=cursor.fetchone()[0]; create_variance_claim(conn,tx_id,booking_id,supplier_id,variance,unit_price,user)
+        if booking_id: refresh_booking_status(conn,booking_id,release_id)
+        cursor.execute('INSERT INTO audit_log ("user",action,timestamp) VALUES (%s,%s,CURRENT_TIMESTAMP)',(user,f"RECEIVED {accepted:,.2f} L into tank; STX-{tx_id}")); conn.commit()
         record_event(conn,"SUPPLIER_RECEIPT","Storage Operations","Tank Transaction",tx_id,f"Accepted {accepted:,.2f} L; dispatch variance {variance:+,.2f} L")
         return tx_id,variance
     except Exception: conn.rollback(); raise
@@ -433,7 +450,7 @@ def post_tank_truck(conn,tank_id,truck_id,movement_at,liters,direction,reference
 
 
 def render_storage_operations(conn):
-    ensure_operations_schema(conn); page_header("Storage Operations","Receive and move fuel safely between suppliers, tanks and trucks.")
+    ensure_operations_schema(conn); ensure_procurement_schema(conn); page_header("Storage Operations","Receive and move fuel safely between suppliers, tanks and trucks.")
     tanks=_tanks(conn); trucks=_trucks(conn); user=st.session_state.get("user","System")
     if tanks.empty: st.warning("Create a depot and storage tank first."); return
     tab_receipt,tab_transfer,tab_loading,tab_return,tab_history=st.tabs(["Supplier receipt","Tank transfer","Load truck","Truck return","Movement history"])
@@ -441,14 +458,25 @@ def render_storage_operations(conn):
     with tab_receipt:
         suppliers=pd.read_sql_query("SELECT id,name FROM suppliers ORDER BY name",conn); supplier_map=dict(zip(suppliers["name"],suppliers["id"]))
         selected=st.selectbox("Receiving tank",list(tank_map),key="receipt_tank"); tank=tanks[tanks["id"]==tank_map[selected]].iloc[0]; st.info(f"Current {tank['balance']:,.2f} L · Available {max(tank['safe_capacity_liters']-tank['balance'],0):,.2f} L")
+        a,b=st.columns(2); supplier=a.selectbox("Supplier",list(supplier_map),key="receipt_supplier"); purchase_type=b.selectbox("Purchase source",["Advance booking","Credit purchase","Cash purchase"],key="receipt_purchase_type")
+        booking_id=None; release_id=None; booking_price=0.0
+        if purchase_type=="Advance booking":
+            available=booking_options(conn,supplier_map[supplier]); available=available[available["product_id"]==int(tank["product_id"])] if not available.empty else available
+            if available.empty: st.warning("No open booking is available for this supplier and product.")
+            else:
+                booking_map=dict(zip(available["label"],available["id"])); booking_label=st.selectbox("Supplier booking",list(booking_map)); booking_id=int(booking_map[booking_label]); booking_row=available[available["id"]==booking_id].iloc[0]; booking_price=float(booking_row["unit_price"] or 0)
+                releases=release_options(conn,booking_id)
+                if not releases.empty:
+                    releases["label"]=releases.apply(lambda r:f"{r['release_number']} · {max(r['released_liters']-r['received_liters'],0):,.2f} L remaining",axis=1); release_map=dict(zip(releases["label"],releases["id"])); release_label=st.selectbox("Booking release",["No specific release"]+list(release_map)); release_id=None if release_label=="No specific release" else int(release_map[release_label])
         with st.form("supplier_receipt"):
-            a,b=st.columns(2); supplier=a.selectbox("Supplier",list(supplier_map)); method=b.selectbox("Transport method",["Supplier delivery","Company collection","Third-party transporter","Other"])
+            method=st.selectbox("Transport method",["Supplier delivery","Company collection","Third-party transporter","Other"])
             c,d,e=st.columns(3); ordered=c.number_input("Ordered/released quantity",min_value=0.0); dispatched=d.number_input("Supplier dispatched quantity",min_value=0.0); accepted=e.number_input("Accepted into tank",min_value=0.0)
-            f,g=st.columns(2); vehicle=f.text_input("Vehicle number"); driver=g.text_input("Driver name"); reference=st.text_input("Delivery note / ticket reference"); notes=st.text_area("Receipt notes"); submitted=st.form_submit_button("Post supplier receipt",type="primary")
+            f,g=st.columns(2); vehicle=f.text_input("Vehicle number"); driver=g.text_input("Driver name"); unit_price=st.number_input("Unit price",min_value=0.0,value=booking_price,format="%.4f",disabled=purchase_type=="Advance booking"); reference=st.text_input("Delivery note / ticket reference"); notes=st.text_area("Receipt notes"); submitted=st.form_submit_button("Post supplier receipt",type="primary")
         if submitted:
             if not reference.strip(): st.error("Delivery note or ticket reference is required.")
+            elif purchase_type=="Advance booking" and not booking_id: st.error("An open booking is required for an advance-booking receipt.")
             else:
-                try: tx,variance=post_supplier_receipt(conn,int(tank["id"]),datetime.now(),ordered,dispatched,accepted,supplier_map[supplier],method,vehicle,driver,reference.strip(),notes,user); st.success(f"STX-{tx} posted. Dispatch-to-accepted variance: {variance:+,.2f} L."); st.rerun()
+                try: tx,variance=post_supplier_receipt(conn,int(tank["id"]),datetime.now(),ordered,dispatched,accepted,supplier_map[supplier],method,vehicle,driver,reference.strip(),notes,user,purchase_type,booking_id,release_id,booking_price if purchase_type=="Advance booking" else unit_price); st.success(f"STX-{tx} posted. Dispatch-to-accepted variance: {variance:+,.2f} L."); st.rerun()
                 except Exception as error: st.error(str(error))
     with tab_transfer:
         source=st.selectbox("Source tank",list(tank_map),key="tank_source"); destinations=[x for x in tank_map if x!=source]; destination=st.selectbox("Destination tank",destinations,key="tank_destination") if destinations else None
