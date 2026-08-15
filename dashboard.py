@@ -10,6 +10,13 @@ from ui import GREEN, RED, page_header, profile, stat_card
 def _read(conn, query, params=None):
     return pd.read_sql_query(query, conn, params=params or [])
 
+def _safe_read(conn,query,params=None):
+    try: return _read(conn,query,params)
+    except Exception:
+        try: conn.rollback()
+        except Exception: pass
+        return pd.DataFrame()
+
 
 def _go(label):
     st.session_state["navigation_target"] = label
@@ -48,16 +55,20 @@ def render_dashboard(conn, truck_dict, truck_list):
         )
 
     st.markdown('<div class="section-label">START AN OPERATION</div>', unsafe_allow_html=True)
-    action_columns = st.columns(4, gap="medium")
     actions = [
         ("Record fuel movement", "Post an uplift or delivery and review the resulting balance.", "Fuel Operations", "launch_movement", True),
-        ("Transfer inventory", "Move fuel safely between trucks with linked IN and OUT records.", "Fuel Operations", "launch_transfer", False),
-        ("Reconcile physical stock", "Compare measured stock with the system and control adjustments.", "Inventory Control", "launch_reconcile", False),
         ("Storage operations", "Receive fuel, transfer tanks, load trucks and post returns.", "Storage Operations", "launch_storage_ops", False),
+        ("Supplier procurement", "Manage bookings, releases and supplier claims.", "Supplier Procurement", "launch_procurement", False),
+        ("Inventory forecasting", "Review demand, stock-out risk and reorder quantities.", "Inventory Forecasting", "launch_forecast", False),
+        ("Reconcile physical stock", "Compare measured stock with the system and control adjustments.", "Inventory Control", "launch_reconcile", False),
+        ("Transaction control", "Control corrections and reversals with approvals.", "Transaction Control", "launch_control", False),
+        ("Master reports", "Generate operational and management reports.", "Report Centre", "launch_reports", False),
+        ("Audit centre", "Investigate who performed every important action.", "Audit Centre", "launch_audit", False),
     ]
-    for column, details in zip(action_columns, actions):
-        with column:
-            _launcher(*details)
+    for start_index in range(0,len(actions),4):
+        action_columns=st.columns(4,gap="medium")
+        for column,details in zip(action_columns,actions[start_index:start_index+4]):
+            with column: _launcher(*details)
 
     settings = _read(conn, "SELECT minimum_stock_level FROM settings ORDER BY id LIMIT 1")
     minimum = float(settings.iloc[0]["minimum_stock_level"] or 0) if not settings.empty else 0
@@ -77,6 +88,13 @@ def render_dashboard(conn, truck_dict, truck_list):
     live_stock = float(balances["balance"].sum()) if not balances.empty else 0
     low_stock = balances[balances["balance"] <= minimum] if not balances.empty else balances
     pending = int(_read(conn, "SELECT COUNT(*) AS count FROM refill_requests WHERE status='PENDING'").iloc[0]["count"])
+    tank_alerts=_safe_read(conn,"""SELECT CONCAT(d.code,' · ',t.code) AS asset,COALESCE(SUM(CASE WHEN x.type='IN' THEN x.liters ELSE -x.liters END),0) AS balance FROM storage_tanks t JOIN depots d ON d.id=t.depot_id LEFT JOIN tank_transactions x ON x.tank_id=t.id GROUP BY t.id,d.code HAVING COALESCE(SUM(CASE WHEN x.type='IN' THEN x.liters ELSE -x.liters END),0)<=t.minimum_stock_liters ORDER BY balance""")
+    overdue=_safe_read(conn,"SELECT r.release_number FROM procurement_releases r WHERE r.status IN ('OPEN','PARTIALLY_RECEIVED') AND r.planned_delivery_date<CURRENT_DATE")
+    upcoming=_safe_read(conn,"SELECT r.release_number FROM procurement_releases r WHERE r.status IN ('OPEN','PARTIALLY_RECEIVED') AND r.planned_delivery_date BETWEEN CURRENT_DATE AND CURRENT_DATE+7")
+    claims=_safe_read(conn,"SELECT id FROM supplier_claims WHERE status NOT IN ('CLOSED','REJECTED')")
+    reconciliations=_safe_read(conn,"SELECT id FROM stock_reconciliations WHERE status='PENDING'")
+    unallocated=_safe_read(conn,"SELECT id FROM procurement_releases WHERE status IN ('OPEN','PARTIALLY_RECEIVED') AND destination_tank_id IS NULL")
+    total_attention=len(low_stock)+pending+len(tank_alerts)+len(overdue)+len(claims)+len(reconciliations)+len(unallocated)
 
     st.markdown('<div class="section-label">TODAY AT A GLANCE</div>', unsafe_allow_html=True)
     metrics = st.columns(5)
@@ -85,7 +103,7 @@ def render_dashboard(conn, truck_dict, truck_list):
         ("Received today", f"{today_summary['total_in']:,.0f} L", "Fuel IN"),
         ("Delivered today", f"{today_summary['total_out']:,.0f} L", "Fuel OUT"),
         ("Movements today", f"{int(today_summary['movements']):,}", "Posted records"),
-        ("Needs attention", f"{len(low_stock) + pending}", f"{len(low_stock)} stock · {pending} approvals"),
+        ("Needs attention", f"{total_attention}", "Stock, releases, claims and controls"),
     ]
     for column, values in zip(metrics, metric_data):
         with column:
@@ -140,7 +158,7 @@ def render_dashboard(conn, truck_dict, truck_list):
 
     with side:
         st.subheader("Attention queue")
-        if low_stock.empty and pending == 0:
+        if total_attention == 0:
             st.success("No urgent inventory actions are waiting.")
         else:
             if not low_stock.empty:
@@ -152,11 +170,21 @@ def render_dashboard(conn, truck_dict, truck_list):
                 st.markdown(f'<div class="queue-item warning"><div><b>Refill approvals</b><br>'
                             f'<span>{pending} request(s) waiting</span></div><strong>REVIEW</strong></div>',
                             unsafe_allow_html=True)
+            for _,row in tank_alerts.head(3).iterrows():
+                st.markdown(f'<div class="queue-item critical"><div><b>{row["asset"]}</b><br><span>{row["balance"]:,.0f} L in storage</span></div><strong>TANK</strong></div>',unsafe_allow_html=True)
+            if len(overdue): st.error(f"{len(overdue)} supplier release(s) overdue")
+            if len(claims): st.warning(f"{len(claims)} supplier claim(s) need follow-up")
+            if len(reconciliations): st.warning(f"{len(reconciliations)} reconciliation(s) pending")
+            if len(unallocated): st.info(f"{len(unallocated)} incoming release(s) need a destination tank")
+            if len(upcoming): st.info(f"{len(upcoming)} release(s) expected within 7 days")
         a1, a2 = st.columns(2)
         if a1.button("Review stock", use_container_width=True):
             _go("Fleet Inventory")
         if a2.button("Approvals", use_container_width=True):
             _go("Approvals")
+        b1,b2=st.columns(2)
+        if b1.button("Procurement",use_container_width=True): _go("Supplier Procurement")
+        if b2.button("Forecast",use_container_width=True): _go("Inventory Forecasting")
 
         st.subheader("Recent timeline")
         timeline = _read(conn, """
