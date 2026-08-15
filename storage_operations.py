@@ -3,9 +3,320 @@ import io
 
 import pandas as pd
 import streamlit as st
+from openpyxl import Workbook
+from openpyxl.formatting.rule import CellIsRule, FormulaRule
+from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+from openpyxl.utils import get_column_letter
+from openpyxl.worksheet.table import Table, TableStyleInfo
 
 from audit import record_event
 from ui import page_header
+
+
+REPORT_COLUMNS = [
+    "Movement ID", "Date", "Time", "Depot", "Tank", "Product", "Direction",
+    "Quantity (L)", "Movement", "Supplier", "Ordered (L)", "Dispatched (L)",
+    "Accepted (L)", "Variance (L)", "Variance %", "Reference", "Transport",
+    "Vehicle", "Driver", "Linked Tank Movement", "Linked Truck Movement",
+    "Status", "Recorded By", "Notes",
+]
+
+
+def _colour(value, fallback):
+    value = str(value or "").strip().lstrip("#")
+    return value.upper() if len(value) in (6, 8) else fallback
+
+
+def _movement_label(value):
+    labels = {
+        "SUPPLIER_RECEIPT": "Supplier Receipt",
+        "TANK_TRANSFER": "Tank Transfer",
+        "TANK_TO_TRUCK": "Tank to Truck",
+        "TRUCK_TO_TANK": "Truck Return to Tank",
+        "OPENING": "Opening Stock",
+        "STANDARD": "Standard Movement",
+    }
+    text = str(value or "STANDARD").strip().upper()
+    return labels.get(text, text.replace("_", " ").title())
+
+
+def _variance_label(value):
+    if pd.isna(value):
+        return "Not Applicable"
+    amount = float(value)
+    if amount < -0.005:
+        return "Short Received"
+    if amount > 0.005:
+        return "Excess Received"
+    return "Matched"
+
+
+def _prepare_export(history):
+    data = history.copy()
+    timestamp = pd.to_datetime(data["movement_at"], errors="coerce", utc=True)
+    local = timestamp.dt.tz_convert("Asia/Dubai").dt.tz_localize(None)
+    records = pd.DataFrame({
+        "Movement ID": data["id"].map(lambda value: f"STX-{int(value)}"),
+        "Date": local.dt.date,
+        "Time": local.dt.time,
+        "Depot": data["depot"],
+        "Tank": data["tank"],
+        "Product": data["product"],
+        "Direction": data["type"].map({"IN": "IN", "OUT": "OUT"}).fillna(data["type"]),
+        "Quantity (L)": pd.to_numeric(data["liters"], errors="coerce").fillna(0.0),
+        "Movement": data["movement_category"].map(_movement_label),
+        "Supplier": data["supplier"],
+        "Ordered (L)": pd.to_numeric(data["ordered_liters"], errors="coerce"),
+        "Dispatched (L)": pd.to_numeric(data["dispatched_liters"], errors="coerce"),
+        "Accepted (L)": pd.to_numeric(data["accepted_liters"], errors="coerce"),
+        "Variance (L)": pd.to_numeric(data["variance_liters"], errors="coerce"),
+        "Variance %": 0.0,
+        "Reference": data["reference"],
+        "Transport": data["transport_method"],
+        "Vehicle": data["vehicle_number"],
+        "Driver": data["driver_name"],
+        "Linked Tank Movement": data["partner_tank_transaction_id"].map(
+            lambda value: f"STX-{int(value)}" if pd.notna(value) else ""
+        ),
+        "Linked Truck Movement": data["truck_transaction_id"].map(
+            lambda value: f"TX-{int(value)}" if pd.notna(value) else ""
+        ),
+        "Status": data["record_status"].fillna("POSTED").str.title(),
+        "Recorded By": data["created_by"].fillna("System"),
+        "Notes": data["notes"],
+    })
+    dispatched = records["Dispatched (L)"].replace(0, pd.NA)
+    records["Variance %"] = records["Variance (L)"] / dispatched
+    return records.where(pd.notna(records), None)
+
+
+def _apply_report_header(sheet, title, subtitle, profile, end_column):
+    primary = _colour(profile.get("primary_color"), "8C1C1C")
+    secondary = _colour(profile.get("secondary_color"), "172033")
+    end = get_column_letter(end_column)
+    sheet.merge_cells(f"A1:{end}2")
+    sheet["A1"] = title
+    sheet["A1"].fill = PatternFill("solid", fgColor=secondary)
+    sheet["A1"].font = Font(name="Aptos Display", size=22, bold=True, color="FFFFFF")
+    sheet["A1"].alignment = Alignment(vertical="center")
+    sheet.merge_cells(f"A3:{end}3")
+    sheet["A3"] = subtitle
+    sheet["A3"].fill = PatternFill("solid", fgColor=primary)
+    sheet["A3"].font = Font(name="Aptos", size=10, color="FFFFFF")
+    sheet["A3"].alignment = Alignment(vertical="center")
+    sheet.row_dimensions[1].height = 24
+    sheet.row_dimensions[2].height = 24
+    sheet.row_dimensions[3].height = 22
+    sheet.sheet_view.showGridLines = False
+
+
+def _style_table_sheet(sheet, headers, first_row, last_row, widths, table_name, profile):
+    primary = _colour(profile.get("primary_color"), "8C1C1C")
+    header_fill = PatternFill("solid", fgColor=primary)
+    header_font = Font(name="Aptos", size=10, bold=True, color="FFFFFF")
+    light_border = Border(bottom=Side(style="thin", color="D9DEE8"))
+    for cell in sheet[first_row]:
+        if cell.column <= len(headers):
+            cell.fill = header_fill
+            cell.font = header_font
+            cell.alignment = Alignment(vertical="center", wrap_text=True)
+    sheet.row_dimensions[first_row].height = 32
+    for row in sheet.iter_rows(min_row=first_row + 1, max_row=last_row, max_col=len(headers)):
+        for cell in row:
+            cell.font = Font(name="Aptos", size=10, color="253047")
+            cell.border = light_border
+            cell.alignment = Alignment(vertical="top", wrap_text=cell.column in (9, 16, 24))
+    for index, width in enumerate(widths, 1):
+        sheet.column_dimensions[get_column_letter(index)].width = width
+    if last_row > first_row:
+        table = Table(displayName=table_name, ref=f"A{first_row}:{get_column_letter(len(headers))}{last_row}")
+        table.tableStyleInfo = TableStyleInfo(
+            name="TableStyleMedium2", showFirstColumn=False, showLastColumn=False,
+            showRowStripes=True, showColumnStripes=False,
+        )
+        sheet.add_table(table)
+    sheet.freeze_panes = f"A{first_row + 1}"
+    sheet.auto_filter.ref = f"A{first_row}:{get_column_letter(len(headers))}{last_row}"
+    sheet.page_setup.orientation = "landscape"
+    sheet.page_setup.fitToWidth = 1
+    sheet.sheet_properties.pageSetUpPr.fitToPage = True
+    sheet.print_title_rows = f"1:{first_row}"
+
+
+def build_operations_report(history, profile):
+    detail = _prepare_export(history)
+    receipt_data = detail[detail["Movement"] == "Supplier Receipt"].copy()
+    detail_end = 6 + max(len(detail), 1)
+    receipt_end = 6 + max(len(receipt_data), 1)
+    company = profile.get("company_name", "FILLIT")
+    application = profile.get("application_name", "Fuel Inventory Control")
+    footer = profile.get("report_footer", "Confidential inventory report")
+    generated = datetime.now()
+    workbook = Workbook()
+    summary = workbook.active
+    summary.title = "Executive Summary"
+    movements = workbook.create_sheet("Movement Details")
+    receipts = workbook.create_sheet("Receipt Variance")
+    workbook.calculation.fullCalcOnLoad = True
+    workbook.calculation.forceFullCalc = True
+    workbook.calculation.calcMode = "auto"
+
+    _apply_report_header(summary, f"{company} | Storage Operations Report", application, profile, 10)
+    summary.merge_cells("A4:J4")
+    summary["A4"] = f"Generated {generated:%d %b %Y, %I:%M %p} (Dubai)  •  {len(detail):,} movement records"
+    summary["A4"].font = Font(name="Aptos", size=10, italic=True, color="667085")
+    summary["A4"].alignment = Alignment(vertical="center")
+    summary.row_dimensions[4].height = 24
+
+    primary = _colour(profile.get("primary_color"), "8C1C1C")
+    secondary = _colour(profile.get("secondary_color"), "172033")
+    card_fill = PatternFill("solid", fgColor="F2F4F7")
+    cards = [
+        ("A6:B6", "A7:B8", "TOTAL MOVEMENTS", f"=COUNTA('Movement Details'!$A$7:$A${detail_end})", "#,##0"),
+        ("D6:E6", "D7:E8", "TOTAL RECEIVED", f'=SUMIF(\'Movement Details\'!$G$7:$G${detail_end},"IN",\'Movement Details\'!$H$7:$H${detail_end})', '#,##0.00 "L"'),
+        ("G6:H6", "G7:H8", "TOTAL ISSUED", f'=SUMIF(\'Movement Details\'!$G$7:$G${detail_end},"OUT",\'Movement Details\'!$H$7:$H${detail_end})', '#,##0.00 "L"'),
+        ("I6:J6", "I7:J8", "NET MOVEMENT", "=D7-G7", '#,##0.00 "L";[Red]-#,##0.00 "L"'),
+    ]
+    for label_range, value_range, label, formula, number_format in cards:
+        summary.merge_cells(label_range)
+        summary.merge_cells(value_range)
+        label_cell = summary[label_range.split(":")[0]]
+        value_cell = summary[value_range.split(":")[0]]
+        label_cell.value = label
+        value_cell.value = formula
+        label_cell.fill = PatternFill("solid", fgColor=secondary)
+        label_cell.font = Font(name="Aptos", size=10, bold=True, color="FFFFFF")
+        label_cell.alignment = Alignment(horizontal="center", vertical="center")
+        value_cell.fill = card_fill
+        value_cell.font = Font(name="Aptos Display", size=20, bold=True, color=primary)
+        value_cell.alignment = Alignment(horizontal="center", vertical="center")
+        value_cell.number_format = number_format
+
+    summary.merge_cells("A10:J10")
+    summary["A10"] = "Supplier Receipt Control"
+    summary["A10"].fill = PatternFill("solid", fgColor=secondary)
+    summary["A10"].font = Font(name="Aptos", size=11, bold=True, color="FFFFFF")
+    summary["A10"].alignment = Alignment(vertical="center")
+    summary_data = [
+        ("Supplier receipts", f'=COUNTIF(\'Movement Details\'!$I$7:$I${detail_end},"Supplier Receipt")', "#,##0"),
+        ("Ordered quantity", f"=SUM('Receipt Variance'!$F$7:$F${receipt_end})", '#,##0.00 "L"'),
+        ("Dispatched quantity", f"=SUM('Receipt Variance'!$G$7:$G${receipt_end})", '#,##0.00 "L"'),
+        ("Accepted quantity", f"=SUM('Receipt Variance'!$H$7:$H${receipt_end})", '#,##0.00 "L"'),
+        ("Net receipt variance", f"=SUM('Receipt Variance'!$I$7:$I${receipt_end})", '#,##0.00 "L";[Red]-#,##0.00 "L"'),
+        ("Short receipts requiring review", f'=COUNTIF(\'Receipt Variance\'!$K$7:$K${receipt_end},"Short Received")', "#,##0"),
+    ]
+    for row_number, (label, formula, number_format) in enumerate(summary_data, 11):
+        summary.merge_cells(start_row=row_number, start_column=1, end_row=row_number, end_column=5)
+        summary.merge_cells(start_row=row_number, start_column=6, end_row=row_number, end_column=10)
+        summary.cell(row_number, 1, label)
+        summary.cell(row_number, 6, formula)
+        summary.cell(row_number, 1).font = Font(name="Aptos", size=10, color="475467")
+        summary.cell(row_number, 6).font = Font(name="Aptos", size=11, bold=True, color="172033")
+        summary.cell(row_number, 6).number_format = number_format
+        summary.cell(row_number, 6).alignment = Alignment(horizontal="right")
+        for cell in summary[row_number]:
+            cell.fill = PatternFill("solid", fgColor="FFFFFF" if row_number % 2 else "F8FAFC")
+            cell.border = Border(bottom=Side(style="thin", color="E4E7EC"))
+
+    summary.merge_cells("A19:J19")
+    summary["A19"] = "Report Guide"
+    summary["A19"].fill = PatternFill("solid", fgColor=secondary)
+    summary["A19"].font = Font(name="Aptos", size=11, bold=True, color="FFFFFF")
+    guide = [
+        "Movement Details: complete audit-ready register of all tank movements.",
+        "Receipt Variance: ordered, dispatched and accepted comparison for supplier receipts.",
+        "Negative variance means less fuel was accepted than the supplier dispatched and should be investigated.",
+    ]
+    for row_number, text in enumerate(guide, 20):
+        summary.merge_cells(start_row=row_number, start_column=1, end_row=row_number, end_column=10)
+        summary.cell(row_number, 1, f"• {text}")
+        summary.cell(row_number, 1).font = Font(name="Aptos", size=10, color="475467")
+        summary.cell(row_number, 1).alignment = Alignment(wrap_text=True, vertical="center")
+        summary.row_dimensions[row_number].height = 24
+    for column in range(1, 11):
+        summary.column_dimensions[get_column_letter(column)].width = 14
+    summary.sheet_view.showGridLines = False
+    summary.freeze_panes = "A5"
+    summary.oddFooter.center.text = footer
+    summary.oddFooter.right.text = "Page &P of &N"
+    summary.page_setup.orientation = "landscape"
+    summary.page_setup.fitToWidth = 1
+    summary.sheet_properties.pageSetUpPr.fitToPage = True
+
+    _apply_report_header(movements, "Movement Details", "Complete storage movement and audit register", profile, len(REPORT_COLUMNS))
+    movements.merge_cells(start_row=4, start_column=1, end_row=4, end_column=len(REPORT_COLUMNS))
+    movements.cell(4, 1, f"Generated {generated:%d %b %Y, %I:%M %p} (Dubai)  •  Use the filters below to investigate movements")
+    movements.cell(4, 1).font = Font(name="Aptos", size=10, italic=True, color="667085")
+    movements.append([])
+    movements.append(REPORT_COLUMNS)
+    for values in detail.itertuples(index=False, name=None):
+        movements.append(list(values))
+    detail_last = max(movements.max_row, 7)
+    if len(detail) == 0:
+        movements.append(["No storage movements found"] + [None] * (len(REPORT_COLUMNS) - 1))
+        detail_last = movements.max_row
+    widths = [14, 13, 11, 12, 15, 14, 11, 15, 22, 25, 15, 17, 15, 15, 13, 22, 22, 16, 18, 20, 20, 13, 16, 34]
+    _style_table_sheet(movements, REPORT_COLUMNS, 6, detail_last, widths, "StorageMovements", profile)
+    for row in range(7, detail_last + 1):
+        movements.cell(row, 2).number_format = "dd mmm yyyy"
+        movements.cell(row, 3).number_format = "hh:mm"
+        for column in (8, 11, 12, 13, 14):
+            movements.cell(row, column).number_format = '#,##0.00 "L";[Red]-#,##0.00 "L"'
+        movements.cell(row, 15).number_format = "0.00%;[Red]-0.00%"
+    movements.conditional_formatting.add(
+        f"N7:N{detail_last}", CellIsRule(operator="lessThan", formula=["0"], fill=PatternFill("solid", fgColor="FEE4E2"))
+    )
+    movements.conditional_formatting.add(
+        f"N7:N{detail_last}", CellIsRule(operator="greaterThan", formula=["0"], fill=PatternFill("solid", fgColor="FEF0C7"))
+    )
+    movements.oddFooter.center.text = footer
+    movements.oddFooter.right.text = "Page &P of &N"
+
+    receipt_headers = [
+        "Movement ID", "Date", "Depot", "Tank", "Supplier", "Ordered (L)",
+        "Dispatched (L)", "Accepted (L)", "Variance (L)", "Accepted %",
+        "Variance Status", "Reference", "Transport", "Vehicle", "Driver", "Recorded By",
+    ]
+    _apply_report_header(receipts, "Supplier Receipt Variance", "Ordered, dispatched and accepted fuel control", profile, len(receipt_headers))
+    receipts.merge_cells(start_row=4, start_column=1, end_row=4, end_column=len(receipt_headers))
+    receipts.cell(4, 1, "Short receipts are highlighted in red. Excess receipts are highlighted in amber.")
+    receipts.cell(4, 1).font = Font(name="Aptos", size=10, italic=True, color="667085")
+    receipts.append([])
+    receipts.append(receipt_headers)
+    for item in receipt_data.to_dict("records"):
+        receipts.append([
+            item["Movement ID"], item["Date"], item["Depot"], item["Tank"], item["Supplier"],
+            item["Ordered (L)"], item["Dispatched (L)"], item["Accepted (L)"], item["Variance (L)"],
+            None, _variance_label(item["Variance (L)"]), item["Reference"], item["Transport"],
+            item["Vehicle"], item["Driver"], item["Recorded By"],
+        ])
+        current = receipts.max_row
+        receipts.cell(current, 10, f'=IF(G{current}=0,"",H{current}/G{current})')
+    if receipt_data.empty:
+        receipts.append(["No supplier receipts found"] + [None] * (len(receipt_headers) - 1))
+    receipt_last = receipts.max_row
+    receipt_widths = [14, 13, 12, 15, 26, 15, 17, 15, 15, 13, 18, 22, 22, 16, 18, 16]
+    _style_table_sheet(receipts, receipt_headers, 6, receipt_last, receipt_widths, "SupplierReceipts", profile)
+    for row in range(7, receipt_last + 1):
+        receipts.cell(row, 2).number_format = "dd mmm yyyy"
+        for column in (6, 7, 8, 9):
+            receipts.cell(row, column).number_format = '#,##0.00 "L";[Red]-#,##0.00 "L"'
+        receipts.cell(row, 10).number_format = "0.00%"
+    receipts.conditional_formatting.add(
+        f"A7:P{receipt_last}", FormulaRule(formula=["$K7=\"Short Received\""], fill=PatternFill("solid", fgColor="FEE4E2"))
+    )
+    receipts.conditional_formatting.add(
+        f"A7:P{receipt_last}", FormulaRule(formula=["$K7=\"Excess Received\""], fill=PatternFill("solid", fgColor="FEF0C7"))
+    )
+    receipts.conditional_formatting.add(
+        f"A7:P{receipt_last}", FormulaRule(formula=["$K7=\"Matched\""], fill=PatternFill("solid", fgColor="DCFCE7"))
+    )
+    receipts.oddFooter.center.text = footer
+    receipts.oddFooter.right.text = "Page &P of &N"
+
+    output = io.BytesIO()
+    workbook.save(output)
+    return output.getvalue()
 
 
 def ensure_operations_schema(conn):
@@ -173,10 +484,24 @@ def render_storage_operations(conn):
     with tab_history:
         history=pd.read_sql_query("""SELECT tx.id,tx.movement_at,d.code AS depot,t.code AS tank,p.name AS product,tx.type,tx.liters,tx.movement_category,
             s.name AS supplier,tx.ordered_liters,tx.dispatched_liters,tx.accepted_liters,tx.variance_liters,tx.reference,tx.vehicle_number,tx.driver_name,
-            tx.partner_tank_transaction_id,tx.truck_transaction_id,tx.created_by FROM tank_transactions tx JOIN storage_tanks t ON t.id=tx.tank_id
+            tx.transport_method,tx.partner_tank_transaction_id,tx.truck_transaction_id,tx.record_status,tx.created_by,tx.notes
+            FROM tank_transactions tx JOIN storage_tanks t ON t.id=tx.tank_id
             JOIN depots d ON d.id=t.depot_id LEFT JOIN products p ON p.id=tx.product_id LEFT JOIN suppliers s ON s.id=tx.supplier_id ORDER BY tx.id DESC""",conn)
-        st.dataframe(history,use_container_width=True,hide_index=True,height=480)
+        display=_prepare_export(history)
+        display_columns=["Movement ID","Date","Time","Depot","Tank","Direction","Quantity (L)","Movement","Supplier","Variance (L)","Reference","Recorded By"]
+        st.dataframe(
+            display[display_columns],use_container_width=True,hide_index=True,height=480,
+            column_config={
+                "Quantity (L)": st.column_config.NumberColumn(format="%.2f L"),
+                "Variance (L)": st.column_config.NumberColumn(format="%+.2f L"),
+            },
+        )
         if not history.empty:
-            export=history.copy(); converted=pd.to_datetime(export["movement_at"],errors="coerce",utc=True); export["movement_at"]=converted.dt.tz_convert("Asia/Dubai").dt.tz_localize(None); buffer=io.BytesIO()
-            with pd.ExcelWriter(buffer,engine="openpyxl") as writer: export.to_excel(writer,index=False,sheet_name="Storage Operations")
-            st.download_button("Download operations report",buffer.getvalue(),f"storage_operations_{datetime.now():%Y%m%d_%H%M%S}.xlsx","application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+            profile=st.session_state.get("company_profile",{})
+            report=build_operations_report(history,profile)
+            st.download_button(
+                "Download professional operations report",report,
+                f"storage_operations_{datetime.now():%Y%m%d_%H%M%S}.xlsx",
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                type="primary",
+            )
