@@ -7,7 +7,7 @@ import streamlit as st
 from audit import record_event
 from rbac import can
 from ui import page_header
-from notifications import (add_request_message, notify_approval_team, notify_user,
+from user_notifications import (add_request_message, notify_approval_team, notify_user,
                            request_messages, set_request_confirmation)
 
 

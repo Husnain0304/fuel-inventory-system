@@ -22,7 +22,7 @@ from trucks import render_trucks
 from ui import apply_theme, page_header, render_sidebar_brand
 from users_admin import render_user_management
 from approval_workflow import ensure_approval_schema, render_approval_centre
-from notifications import ensure_notification_schema, render_notifications, render_request_confirmation, unread_count
+from user_notifications import ensure_notification_schema, render_notifications, render_request_confirmation, unread_count
 
 
 st.set_page_config(page_title="Fuel Inventory Control", page_icon="⛽", layout="wide", initial_sidebar_state="expanded")
@@ -30,11 +30,13 @@ conn = get_connection()
 init_db(conn)
 ensure_rbac_schema(conn)
 ensure_approval_schema(conn)
-ensure_notification_schema(conn)
 company = get_company_profile(conn)
 st.session_state["company_profile"] = company
 apply_theme(company)
 require_login(conn)
+if not st.session_state.get("notification_schema_ready"):
+    ensure_notification_schema(conn)
+    st.session_state["notification_schema_ready"] = True
 render_sidebar_brand(company)
 
 menu = {
