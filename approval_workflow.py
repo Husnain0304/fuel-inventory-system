@@ -7,7 +7,8 @@ import streamlit as st
 from audit import record_event
 from rbac import can
 from ui import page_header
-from notifications import notify_approval_team, notify_user
+from notifications import (add_request_message, notify_approval_team, notify_user,
+                           request_messages, set_request_confirmation)
 
 
 DEFAULT_LIMITS = {
@@ -73,6 +74,7 @@ def submit_approval_request(conn, request_kind, title, payload, requested_by, qu
     record_event(conn,"SUBMIT_FOR_APPROVAL","Approval Centre","Approval Request",request_id,title)
     notify_approval_team(conn,f"Approval required · AP-{request_id}",
                          f"{title}. Requested by {requested_by}.",request_kind,request_id,requested_by)
+    set_request_confirmation(request_id,title)
     return request_id
 
 
@@ -210,6 +212,19 @@ def _render_operational_requests(conn):
                 st.write(f"**Resolution notes:** {details.get('notes','—')}")
             elif item.request_kind == "SUPPLIER_RECEIPT":
                 st.write(f"**Delivery reference:** {details.get('reference','—')}  |  **Accepted:** {float(details.get('accepted') or 0):,.2f} L")
+            messages=request_messages(conn,int(item.id))
+            if not messages.empty:
+                with st.expander(f"Requester follow-ups · {len(messages[messages['message_type']=='FOLLOW_UP'])}"):
+                    for message in messages.itertuples():
+                        st.write(f"**{str(message.message_type).replace('_',' ').title()} · {message.created_by} · {pd.to_datetime(message.created_at):%d %b %Y %H:%M}**")
+                        st.caption(message.message)
+                    response=st.text_area("Response to requester",key=f"approver_response_{item.id}")
+                    if st.button("Send response",key=f"send_response_{item.id}"):
+                        if len(response.strip())<3: st.error("Enter a response.")
+                        else:
+                            add_request_message(conn,int(item.id),"APPROVER_RESPONSE",response,st.session_state["user"])
+                            notify_user(conn,item.requested_by,f"Approver responded · AP-{item.id}",response,"INFO",item.request_kind,item.id,"Notifications",st.session_state["user"])
+                            st.success("Response sent."); st.rerun()
             comment=st.text_input("Decision comment",key=f"op_comment_{item.id}")
             approve,reject=st.columns(2)
             if approve.button("Approve and post",key=f"op_approve_{item.id}",type="primary",use_container_width=True):

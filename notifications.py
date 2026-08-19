@@ -16,6 +16,11 @@ def ensure_notification_schema(conn):
             read_at TIMESTAMPTZ, created_by TEXT)""")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_notifications_user ON user_notifications(recipient_username,is_read,created_at DESC)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_notifications_group ON user_notifications(recipient_group,is_read,created_at DESC)")
+        cursor.execute("""CREATE TABLE IF NOT EXISTS approval_request_messages(
+            id BIGSERIAL PRIMARY KEY,request_id BIGINT NOT NULL REFERENCES approval_requests(id) ON DELETE CASCADE,
+            message_type TEXT NOT NULL CHECK(message_type IN ('FOLLOW_UP','APPROVER_RESPONSE','WITHDRAWAL')),
+            message TEXT NOT NULL,created_by TEXT NOT NULL,created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP)""")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_request_messages_request ON approval_request_messages(request_id,created_at,id)")
         conn.commit()
     except Exception:
         conn.rollback()
@@ -54,6 +59,33 @@ def notify_approval_team(conn, title, message, source_type=None, source_id=None,
     return notification_id
 
 
+def set_request_confirmation(request_id, title):
+    st.session_state["request_confirmation"]={"id":int(request_id),"title":title}
+
+
+def render_request_confirmation():
+    item=st.session_state.get("request_confirmation")
+    if not item:
+        return
+    left,right=st.columns([8,1])
+    left.success(f"AP-{item['id']} successfully submitted and waiting for approval. {item['title']}")
+    if right.button("Dismiss",key="dismiss_request_confirmation",use_container_width=True):
+        st.session_state.pop("request_confirmation",None)
+        st.rerun()
+
+
+def request_messages(conn,request_id):
+    return pd.read_sql_query("""SELECT message_type,message,created_by,created_at
+        FROM approval_request_messages WHERE request_id=%s ORDER BY created_at,id""",conn,params=[request_id])
+
+
+def add_request_message(conn,request_id,message_type,message,created_by):
+    cursor=conn.cursor(); cursor.execute("""INSERT INTO approval_request_messages
+        (request_id,message_type,message,created_by) VALUES (%s,%s,%s,%s) RETURNING id""",
+        (request_id,message_type,message.strip(),created_by))
+    message_id=cursor.fetchone()[0]; conn.commit(); return message_id
+
+
 def _audience():
     role = st.session_state.get("role", "VIEWER")
     username = st.session_state.get("user", "")
@@ -83,9 +115,8 @@ def _mark_read(conn, notification_id=None):
     conn.commit()
 
 
-def render_notifications(conn):
+def _render_inbox(conn):
     ensure_notification_schema(conn)
-    page_header("Notification Centre", "Follow approval requests, decisions and actions requiring your attention.")
     username, approval_member = _audience()
     data = pd.read_sql_query("""SELECT id,notification_type,title,message,source_type,source_id,target_page,
         is_read,created_at,created_by FROM user_notifications
@@ -117,3 +148,71 @@ def render_notifications(conn):
                 _mark_read(conn, int(item.id))
                 st.session_state["navigation_target"] = item.target_page
                 st.rerun()
+
+
+def _render_my_requests(conn):
+    username=st.session_state.get("user","")
+    data=pd.read_sql_query("""SELECT id,request_kind,title,quantity,monetary_value,status,requested_at,
+        reviewed_by,reviewed_at,review_comment,posted_reference,failure_message
+        FROM approval_requests WHERE LOWER(requested_by)=LOWER(%s) ORDER BY requested_at DESC,id DESC""",conn,params=[username])
+    if data.empty:
+        st.info("You have not submitted any AP requests yet.")
+        return
+    a,b,c=st.columns([1,1,2]); status_filter=a.selectbox("Status",["All","PENDING","POSTED","REJECTED","CANCELLED","FAILED"]); search=b.text_input("AP number"); kind_filter=c.multiselect("Request type",sorted(data["request_kind"].unique()))
+    view=data.copy()
+    if status_filter!="All": view=view[view["status"]==status_filter]
+    if search.strip():
+        number=search.upper().replace("AP-","").strip()
+        if number.isdigit(): view=view[view["id"]==int(number)]
+        else: view=view.iloc[0:0]
+    if kind_filter: view=view[view["request_kind"].isin(kind_filter)]
+    if view.empty:
+        st.info("No requests match the selected filters.")
+        return
+    for item in view.itertuples():
+        with st.container(border=True):
+            h1,h2=st.columns([5,1]); h1.markdown(f"### AP-{item.id} · {item.title}"); h2.markdown(f"**{item.status}**")
+            h1.caption(f"Submitted {pd.to_datetime(item.requested_at):%d %b %Y %H:%M} · {str(item.request_kind).replace('_',' ').title()}")
+            if h2.button("Open approval",key=f"my_open_{item.id}",use_container_width=True):
+                st.session_state["navigation_target"]="Approvals"; st.rerun()
+            if item.posted_reference: st.success(f"Completed as {item.posted_reference}")
+            if item.reviewed_by: st.write(f"**Reviewed by:** {item.reviewed_by}  |  **Comment:** {item.review_comment or '—'}")
+            if item.failure_message: st.error(item.failure_message)
+            messages=request_messages(conn,int(item.id))
+            with st.expander(f"Timeline · {1+len(messages)+(1 if item.reviewed_at else 0)} events"):
+                st.write(f"**Submitted** · {pd.to_datetime(item.requested_at):%d %b %Y %H:%M} · {username}")
+                for message in messages.itertuples():
+                    st.write(f"**{str(message.message_type).replace('_',' ').title()}** · {pd.to_datetime(message.created_at):%d %b %Y %H:%M} · {message.created_by}")
+                    st.caption(message.message)
+                if item.reviewed_at: st.write(f"**{item.status.title()}** · {pd.to_datetime(item.reviewed_at):%d %b %Y %H:%M} · {item.reviewed_by}")
+            if item.status=="PENDING":
+                follow,withdraw=st.tabs(["Send follow-up","Withdraw request"])
+                with follow:
+                    follow_text=st.text_area("Follow-up message",key=f"follow_text_{item.id}")
+                    if st.button("Send follow-up",key=f"follow_send_{item.id}",type="primary"):
+                        if len(follow_text.strip())<3: st.error("Enter a follow-up message.")
+                        else:
+                            add_request_message(conn,int(item.id),"FOLLOW_UP",follow_text,username)
+                            notify_approval_team(conn,f"Follow-up received · AP-{item.id}",follow_text,item.request_kind,item.id,username)
+                            st.success("Follow-up sent to the approval team."); st.rerun()
+                with withdraw:
+                    reason=st.text_area("Withdrawal reason",key=f"withdraw_reason_{item.id}")
+                    if st.button("Withdraw pending request",key=f"withdraw_{item.id}"):
+                        if len(reason.strip())<5: st.error("Enter a clear withdrawal reason.")
+                        else:
+                            cursor=conn.cursor(); cursor.execute("""UPDATE approval_requests SET status='CANCELLED',
+                                reviewed_at=CURRENT_TIMESTAMP,review_comment=%s WHERE id=%s AND status='PENDING' AND LOWER(requested_by)=LOWER(%s)""",
+                                (reason.strip(),int(item.id),username))
+                            if cursor.rowcount!=1: conn.rollback(); st.error("This request is no longer available for withdrawal.")
+                            else:
+                                conn.commit(); add_request_message(conn,int(item.id),"WITHDRAWAL",reason,username)
+                                notify_approval_team(conn,f"Request withdrawn · AP-{item.id}",reason,item.request_kind,item.id,username)
+                                st.success("Request withdrawn. No operational change was posted."); st.rerun()
+
+
+def render_notifications(conn):
+    ensure_notification_schema(conn)
+    page_header("Notification Centre", "Follow approval requests, decisions and actions requiring your attention.")
+    inbox,my_requests=st.tabs(["Notifications","My Requests"])
+    with inbox: _render_inbox(conn)
+    with my_requests: _render_my_requests(conn)
