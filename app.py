@@ -21,7 +21,7 @@ from transaction_control import render_transaction_control
 from trucks import render_trucks
 from ui import apply_theme, page_header, render_sidebar_brand
 from users_admin import render_user_management
-from approval_workflow import ensure_approval_schema, render_approval_centre
+from approval_workflow import ensure_approval_schema, process_approval_escalations, render_approval_centre
 from user_notifications import ensure_notification_schema, render_notifications, render_request_confirmation, unread_count
 
 
@@ -37,6 +37,9 @@ require_login(conn)
 if not st.session_state.get("notification_schema_ready"):
     ensure_notification_schema(conn)
     st.session_state["notification_schema_ready"] = True
+if not st.session_state.get("approval_escalation_checked"):
+    process_approval_escalations(conn)
+    st.session_state["approval_escalation_checked"] = True
 render_sidebar_brand(company)
 
 menu = {

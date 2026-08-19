@@ -142,7 +142,7 @@ def _render_inbox(conn):
 def _render_my_requests(conn):
     username=st.session_state.get("user","")
     data=pd.read_sql_query("""SELECT id,request_kind,title,quantity,monetary_value,status,requested_at,
-        reviewed_by,reviewed_at,review_comment,posted_reference,failure_message
+        reviewed_by,reviewed_at,review_comment,posted_reference,failure_message,priority,due_at,escalated_at
         FROM approval_requests WHERE LOWER(requested_by)=LOWER(%s) ORDER BY requested_at DESC,id DESC""",conn,params=[username])
     if data.empty: st.info("You have not submitted any AP requests yet."); return
     a,b,c=st.columns([1,1,2]); status_filter=a.selectbox("Status",["All","PENDING","POSTED","REJECTED","CANCELLED","FAILED"]); search=b.text_input("AP number"); kind_filter=c.multiselect("Request type",sorted(data["request_kind"].unique()))
@@ -156,6 +156,11 @@ def _render_my_requests(conn):
         with st.container(border=True):
             h1,h2=st.columns([5,1]); h1.markdown(f"### AP-{item.id} · {item.title}"); h2.markdown(f"**{item.status}**")
             h1.caption(f"Submitted {pd.to_datetime(item.requested_at):%d %b %Y %H:%M} · {str(item.request_kind).replace('_',' ').title()}")
+            if item.status=="PENDING" and pd.notna(item.due_at):
+                remaining=pd.to_datetime(item.due_at,utc=True)-pd.Timestamp.now(tz="UTC"); hours=remaining.total_seconds()/3600
+                if hours<0: st.error(f"Overdue by {abs(hours):.1f} hours · Priority {item.priority}")
+                elif hours<=2: st.warning(f"Due in {hours:.1f} hours · Priority {item.priority}")
+                else: st.info(f"Due in {hours:.1f} hours · Priority {item.priority}")
             if h2.button("Open approval",key=f"my_open_{item.id}",use_container_width=True): st.session_state["navigation_target"]="Approvals"; st.rerun()
             if item.posted_reference: st.success(f"Completed as {item.posted_reference}")
             if item.reviewed_by: st.write(f"**Reviewed by:** {item.reviewed_by}  |  **Comment:** {item.review_comment or '—'}")

@@ -18,6 +18,14 @@ DEFAULT_LIMITS = {
     "BOOKING_VALUE": (250000.0, "AED", "Supplier booking value requiring approval"),
 }
 
+DEFAULT_SLA_RULES = {
+    "SUPPLIER_RECEIPT": (4, 1, "HIGH"),
+    "SUPPLIER_BOOKING": (24, 4, "MEDIUM"),
+    "CLAIM_RESOLUTION": (24, 4, "MEDIUM"),
+    "BOOKING_CANCELLATION": (8, 2, "HIGH"),
+    "RELEASE_CANCELLATION": (8, 2, "HIGH"),
+}
+
 
 def ensure_approval_schema(conn):
     cursor = conn.cursor()
@@ -41,9 +49,27 @@ def ensure_approval_schema(conn):
             reviewed_by TEXT, reviewed_at TIMESTAMPTZ, review_comment TEXT,
             posted_reference TEXT, failure_message TEXT)""")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_approval_requests_status ON approval_requests(status,requested_at)")
+        cursor.execute("""CREATE TABLE IF NOT EXISTS approval_sla_rules(
+            request_kind TEXT PRIMARY KEY,target_hours INTEGER NOT NULL CHECK(target_hours>0),
+            warning_hours INTEGER NOT NULL DEFAULT 1 CHECK(warning_hours>=0),
+            priority TEXT NOT NULL DEFAULT 'MEDIUM' CHECK(priority IN ('LOW','MEDIUM','HIGH','CRITICAL')),
+            enabled BOOLEAN NOT NULL DEFAULT TRUE,updated_by TEXT,updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP)""")
+        for statement in (
+            "ALTER TABLE approval_requests ADD COLUMN IF NOT EXISTS priority TEXT DEFAULT 'MEDIUM'",
+            "ALTER TABLE approval_requests ADD COLUMN IF NOT EXISTS due_at TIMESTAMPTZ",
+            "ALTER TABLE approval_requests ADD COLUMN IF NOT EXISTS escalated_at TIMESTAMPTZ",
+        ):
+            cursor.execute(statement)
         for key, (threshold, unit, name) in DEFAULT_LIMITS.items():
             cursor.execute("""INSERT INTO approval_limits(rule_key,rule_name,threshold,unit)
                 VALUES (%s,%s,%s,%s) ON CONFLICT(rule_key) DO NOTHING""", (key, name, threshold, unit))
+        for kind,(target,warning,priority) in DEFAULT_SLA_RULES.items():
+            cursor.execute("""INSERT INTO approval_sla_rules(request_kind,target_hours,warning_hours,priority)
+                VALUES (%s,%s,%s,%s) ON CONFLICT(request_kind) DO NOTHING""",(kind,target,warning,priority))
+        cursor.execute("""UPDATE approval_requests r SET
+            priority=COALESCE(s.priority,'MEDIUM'),
+            due_at=r.requested_at+(COALESCE(s.target_hours,24)*INTERVAL '1 hour')
+            FROM approval_sla_rules s WHERE r.request_kind=s.request_kind AND r.due_at IS NULL""")
         conn.commit()
     except Exception:
         conn.rollback()
@@ -66,10 +92,12 @@ def needs_approval(conn, rule_key, amount):
 def submit_approval_request(conn, request_kind, title, payload, requested_by, quantity=None, monetary_value=None):
     ensure_approval_schema(conn)
     cursor = conn.cursor()
+    cursor.execute("SELECT target_hours,priority FROM approval_sla_rules WHERE request_kind=%s AND enabled=TRUE",(request_kind,))
+    rule=cursor.fetchone(); target_hours=int(rule[0]) if rule else 24; priority=rule[1] if rule else "MEDIUM"
     cursor.execute("""INSERT INTO approval_requests
-        (request_kind,title,quantity,monetary_value,payload,requested_by)
-        VALUES (%s,%s,%s,%s,%s::jsonb,%s) RETURNING id""",
-        (request_kind,title,quantity,monetary_value,json.dumps(payload,default=str),requested_by))
+        (request_kind,title,quantity,monetary_value,payload,requested_by,priority,due_at)
+        VALUES (%s,%s,%s,%s,%s::jsonb,%s,%s,CURRENT_TIMESTAMP+(%s*INTERVAL '1 hour')) RETURNING id""",
+        (request_kind,title,quantity,monetary_value,json.dumps(payload,default=str),requested_by,priority,target_hours))
     request_id=cursor.fetchone()[0]; conn.commit()
     record_event(conn,"SUBMIT_FOR_APPROVAL","Approval Centre","Approval Request",request_id,title)
     notify_approval_team(conn,f"Approval required · AP-{request_id}",
@@ -121,6 +149,26 @@ def _pending_counts(conn):
     except Exception:
         conn.rollback(); values.append(0)
     return values
+
+
+def _sla_label(due_at,warning_hours=1):
+    if pd.isna(due_at): return "No deadline", "NORMAL"
+    remaining=pd.to_datetime(due_at,utc=True)-pd.Timestamp.now(tz="UTC")
+    seconds=remaining.total_seconds()
+    if seconds<0: return f"Overdue by {abs(seconds)/3600:.1f} hours", "OVERDUE"
+    if seconds<=float(warning_hours or 0)*3600: return f"Due in {seconds/3600:.1f} hours", "DUE_SOON"
+    return f"Due in {seconds/3600:.1f} hours", "ON_TIME"
+
+
+def process_approval_escalations(conn):
+    overdue=pd.read_sql_query("""SELECT r.id,r.title,r.request_kind,r.requested_by,r.due_at
+        FROM approval_requests r JOIN approval_sla_rules s ON s.request_kind=r.request_kind
+        WHERE r.status='PENDING' AND s.enabled=TRUE AND r.due_at<CURRENT_TIMESTAMP AND r.escalated_at IS NULL""",conn)
+    for item in overdue.itertuples():
+        notify_approval_team(conn,f"Overdue approval escalated · AP-{item.id}",
+            f"{item.title} is overdue and requires immediate review. Requested by {item.requested_by}.",
+            item.request_kind,item.id,"System Escalation")
+        cursor=conn.cursor(); cursor.execute("UPDATE approval_requests SET escalated_at=CURRENT_TIMESTAMP WHERE id=%s AND escalated_at IS NULL",(item.id,)); conn.commit()
 
 
 def _execute_operational_request(conn, request_id, reviewer, comment):
@@ -193,12 +241,18 @@ def _execute_operational_request(conn, request_id, reviewer, comment):
 
 
 def _render_operational_requests(conn):
-    data=pd.read_sql_query("""SELECT id,request_kind,title,quantity,monetary_value,payload,requested_by,requested_at
-        FROM approval_requests WHERE status='PENDING' ORDER BY requested_at,id""",conn)
+    data=pd.read_sql_query("""SELECT r.id,r.request_kind,r.title,r.quantity,r.monetary_value,r.payload,r.requested_by,
+        r.requested_at,r.priority,r.due_at,r.escalated_at,COALESCE(s.warning_hours,1) AS warning_hours
+        FROM approval_requests r LEFT JOIN approval_sla_rules s ON s.request_kind=r.request_kind
+        WHERE r.status='PENDING' ORDER BY CASE r.priority WHEN 'CRITICAL' THEN 1 WHEN 'HIGH' THEN 2 WHEN 'MEDIUM' THEN 3 ELSE 4 END,r.due_at,r.id""",conn)
     if data.empty: st.success("No supplier receipts or bookings are waiting."); return
     for item in data.itertuples():
         with st.container(border=True):
             st.markdown(f"### AP-{item.id} · {item.title}")
+            sla_text,sla_state=_sla_label(item.due_at,item.warning_hours)
+            if sla_state=="OVERDUE": st.error(f"OVERDUE · {sla_text} · Priority {item.priority}")
+            elif sla_state=="DUE_SOON": st.warning(f"DUE SOON · {sla_text} · Priority {item.priority}")
+            else: st.info(f"{sla_text} · Priority {item.priority}")
             a,b,c=st.columns(3)
             a.metric("Quantity",f"{item.quantity:,.2f} L" if pd.notna(item.quantity) else "—")
             b.metric("Value",f"{item.monetary_value:,.2f}" if pd.notna(item.monetary_value) else "—")
@@ -333,10 +387,11 @@ def _render_changes(conn):
 
 def render_approval_centre(conn):
     ensure_approval_schema(conn)
+    process_approval_escalations(conn)
     page_header("Approval Centre", "Review controlled inventory decisions from one queue with complete accountability.")
     refills,reconciliations,changes,operations=_pending_counts(conn)
     a,b,c,d=st.columns(4); a.metric("Waiting approval",refills+reconciliations+changes+operations); b.metric("Operational requests",operations); c.metric("Stock adjustments",reconciliations); d.metric("Other controls",refills+changes)
-    queue,policies,history=st.tabs(["Approval queue","Approval limits","Decision history"])
+    queue,policies,sla_dashboard,history=st.tabs(["Approval queue","Approval limits","SLA & workload","Decision history"])
     with queue:
         if not can(st.session_state.get("role","VIEWER"),"APPROVE"):
             st.info("You can view the queue, but only an Approver, Inventory Manager or Administrator can make decisions.")
@@ -354,6 +409,36 @@ def render_approval_centre(conn):
                 for row in edited.itertuples(): cursor.execute("UPDATE approval_limits SET threshold=%s,enabled=%s,updated_by=%s,updated_at=CURRENT_TIMESTAMP WHERE rule_key=%s",(float(row.threshold),bool(row.enabled),st.session_state["user"],row.rule_key))
                 conn.commit(); record_event(conn,"UPDATE_LIMITS","Approval Centre","Approval Policy",None,"Updated approval thresholds"); st.success("Approval limits saved."); st.rerun()
         else: st.dataframe(limits.drop(columns=["rule_key"]),use_container_width=True,hide_index=True)
+    with sla_dashboard:
+        pending=pd.read_sql_query("""SELECT r.id,r.request_kind,r.title,r.priority,r.requested_by,r.requested_at,r.due_at,
+            r.escalated_at,COALESCE(s.warning_hours,1) AS warning_hours
+            FROM approval_requests r LEFT JOIN approval_sla_rules s ON s.request_kind=r.request_kind
+            WHERE r.status='PENDING' ORDER BY r.due_at""",conn)
+        completed=pd.read_sql_query("""SELECT request_kind,EXTRACT(EPOCH FROM (reviewed_at-requested_at))/3600.0 AS approval_hours
+            FROM approval_requests WHERE status IN ('POSTED','REJECTED') AND reviewed_at IS NOT NULL""",conn)
+        overdue_count=int((pd.to_datetime(pending["due_at"],utc=True)<pd.Timestamp.now(tz="UTC")).sum()) if not pending.empty else 0
+        due_soon=0
+        if not pending.empty:
+            remaining=(pd.to_datetime(pending["due_at"],utc=True)-pd.Timestamp.now(tz="UTC")).dt.total_seconds()/3600
+            due_soon=int(((remaining>=0)&(remaining<=pending["warning_hours"])).sum())
+        a,b,c,d=st.columns(4); a.metric("Pending",len(pending)); b.metric("Due soon",due_soon); c.metric("Overdue",overdue_count); d.metric("Average approval time",f"{completed['approval_hours'].mean():.1f} h" if not completed.empty else "—")
+        st.subheader("SLA rules")
+        rules=pd.read_sql_query("SELECT request_kind,target_hours,warning_hours,priority,enabled,updated_by,updated_at FROM approval_sla_rules ORDER BY request_kind",conn)
+        if st.session_state.get("role")=="ADMIN":
+            edited=st.data_editor(rules,column_config={"request_kind":"Request type","target_hours":st.column_config.NumberColumn("Target hours",min_value=1,step=1),"warning_hours":st.column_config.NumberColumn("Due-soon warning (hours)",min_value=0,step=1),"priority":st.column_config.SelectboxColumn("Priority",options=["LOW","MEDIUM","HIGH","CRITICAL"]),"enabled":"Enabled","updated_by":None,"updated_at":None},disabled=["request_kind"],hide_index=True,use_container_width=True,key="sla_rules_editor")
+            if st.button("Save SLA rules",type="primary"):
+                cursor=conn.cursor()
+                for row in edited.itertuples(): cursor.execute("""UPDATE approval_sla_rules SET target_hours=%s,warning_hours=%s,priority=%s,enabled=%s,updated_by=%s,updated_at=CURRENT_TIMESTAMP WHERE request_kind=%s""",(int(row.target_hours),int(row.warning_hours),row.priority,bool(row.enabled),st.session_state["user"],row.request_kind))
+                conn.commit(); record_event(conn,"UPDATE_SLA","Approval Centre","SLA Rules",None,"Updated approval SLA rules"); st.success("SLA rules saved. New requests will use the updated deadlines."); st.rerun()
+        else: st.dataframe(rules.drop(columns=["updated_by"]),use_container_width=True,hide_index=True)
+        st.subheader("Current workload")
+        if pending.empty: st.success("No AP requests are pending.")
+        else:
+            workload=pending.copy(); workload["SLA"]=workload.apply(lambda r:_sla_label(r["due_at"],r["warning_hours"])[0],axis=1)
+            st.dataframe(workload[["id","request_kind","title","priority","requested_by","requested_at","due_at","SLA","escalated_at"]],use_container_width=True,hide_index=True,height=380)
+        if not completed.empty:
+            summary=completed.groupby("request_kind",as_index=False).agg(Completed=("approval_hours","count"),Average_Hours=("approval_hours","mean"),Maximum_Hours=("approval_hours","max"))
+            st.subheader("Approval performance by request type"); st.dataframe(summary,use_container_width=True,hide_index=True)
     with history:
         decisions=pd.read_sql_query("SELECT id,decided_at,source_module,source_type,source_id,decision,requested_by,decided_by,comment FROM approval_decisions ORDER BY id DESC",conn)
         if decisions.empty: st.info("No central approval decisions have been recorded yet.")
