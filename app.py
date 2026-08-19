@@ -21,12 +21,14 @@ from transaction_control import render_transaction_control
 from trucks import render_trucks
 from ui import apply_theme, page_header, render_sidebar_brand
 from users_admin import render_user_management
+from approval_workflow import ensure_approval_schema, render_approval_centre
 
 
 st.set_page_config(page_title="Fuel Inventory Control", page_icon="⛽", layout="wide", initial_sidebar_state="expanded")
 conn = get_connection()
 init_db(conn)
 ensure_rbac_schema(conn)
+ensure_approval_schema(conn)
 company = get_company_profile(conn)
 st.session_state["company_profile"] = company
 apply_theme(company)
@@ -113,8 +115,7 @@ elif page == "Bulk Upload":
     page_header("Integration Inbox", "Validate external delivery data before it changes inventory.")
     render_bulk_upload(conn, cursor, truck_dict, truck_list)
 elif page == "Refill Approvals":
-    from approvals import render_approvals
-    render_approvals(conn, cursor)
+    render_approval_centre(conn)
 elif page == "Audit Log":
     page_header("Audit Centre", "Investigate who performed an action, when it happened and what changed.")
     c1, c2, c3 = st.columns([1, 1, 2])

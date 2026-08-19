@@ -6,6 +6,7 @@ import streamlit as st
 
 from audit import record_event
 from ui import page_header
+from rbac import can
 
 
 REASONS = [
@@ -144,8 +145,8 @@ def render_reconciliation(conn):
 
     with tab_approve:
         pending = history[history["status"] == "PENDING"] if not history.empty else history
-        if st.session_state.get("role") != "ADMIN":
-            st.info("Only an administrator can approve and post inventory adjustments.")
+        if not can(st.session_state.get("role","VIEWER"),"APPROVE"):
+            st.info("Approver permission is required to review inventory adjustments.")
         elif pending.empty:
             st.success("No reconciliations are waiting for approval.")
         else:
@@ -163,6 +164,8 @@ def render_reconciliation(conn):
                     if approve.button("Approve and post adjustment", key=f"approve_{item['id']}", type="primary", use_container_width=True):
                         if not comment.strip():
                             st.error("Enter a review comment before approval.")
+                        elif str(item["recorded_by"]).strip().lower() == st.session_state.get("user","").strip().lower():
+                            st.error("You cannot approve your own physical-count request.")
                         else:
                             try:
                                 tx = _post_adjustment(conn,int(item["id"]),st.session_state["user"],comment.strip())
@@ -173,6 +176,8 @@ def render_reconciliation(conn):
                     if reject.button("Reject", key=f"reject_{item['id']}", use_container_width=True):
                         if not comment.strip():
                             st.error("Enter a rejection reason.")
+                        elif str(item["recorded_by"]).strip().lower() == st.session_state.get("user","").strip().lower():
+                            st.error("You cannot reject your own physical-count request.")
                         else:
                             cursor = conn.cursor()
                             cursor.execute("""UPDATE stock_reconciliations SET status='REJECTED',reviewed_by=%s,

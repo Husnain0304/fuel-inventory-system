@@ -6,6 +6,7 @@ import streamlit as st
 
 from audit import record_event
 from ui import page_header
+from rbac import can
 
 
 def ensure_transaction_control_schema(conn):
@@ -213,7 +214,7 @@ def render_transaction_control(conn):
                         st.success(f"CR-{request_id} submitted. Inventory has not changed yet."); st.rerun()
 
     with tab_review:
-        if st.session_state.get("role")!="ADMIN": st.info("Administrator permission is required.")
+        if not can(st.session_state.get("role","VIEWER"),"APPROVE"): st.info("Approver permission is required.")
         elif pending.empty: st.success("No requests are waiting for review.")
         else:
             for _,item in pending.iterrows():
@@ -226,11 +227,13 @@ def render_transaction_control(conn):
                     approve,reject=st.columns(2)
                     if approve.button("Approve and post",key=f"cr_approve_{item['id']}",type="primary",use_container_width=True):
                         if not comment.strip(): st.error("Enter a review comment.")
+                        elif str(item["requested_by"]).strip().lower()==st.session_state.get("user","").strip().lower(): st.error("You cannot approve your own change request.")
                         else:
                             try: _post_request(conn,int(item["id"]),st.session_state["user"],comment.strip()); st.rerun()
                             except Exception as error: st.error(str(error))
                     if reject.button("Reject",key=f"cr_reject_{item['id']}",use_container_width=True):
                         if not comment.strip(): st.error("Enter a rejection reason.")
+                        elif str(item["requested_by"]).strip().lower()==st.session_state.get("user","").strip().lower(): st.error("You cannot reject your own change request.")
                         else:
                             cursor=conn.cursor(); cursor.execute("""UPDATE transaction_change_requests SET status='REJECTED',
                                 reviewed_by=%s,reviewed_at=CURRENT_TIMESTAMP,review_comment=%s WHERE id=%s AND status='PENDING'""",
