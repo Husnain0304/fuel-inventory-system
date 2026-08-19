@@ -7,6 +7,7 @@ import streamlit as st
 from audit import record_event
 from rbac import can
 from ui import page_header
+from notifications import notify_approval_team, notify_user
 
 
 DEFAULT_LIMITS = {
@@ -70,6 +71,8 @@ def submit_approval_request(conn, request_kind, title, payload, requested_by, qu
         (request_kind,title,quantity,monetary_value,json.dumps(payload,default=str),requested_by))
     request_id=cursor.fetchone()[0]; conn.commit()
     record_event(conn,"SUBMIT_FOR_APPROVAL","Approval Centre","Approval Request",request_id,title)
+    notify_approval_team(conn,f"Approval required · AP-{request_id}",
+                         f"{title}. Requested by {requested_by}.",request_kind,request_id,requested_by)
     return request_id
 
 
@@ -82,6 +85,9 @@ def _record_decision(conn, module, source_type, source_id, decision, requester, 
     conn.commit()
     record_event(conn, decision, "Approval Centre", source_type, source_id,
                  f"{decision.title()} by {reviewer}. {comment}")
+    notify_user(conn,requester,f"Request {decision.lower()} · {source_type} {source_id}",
+                f"Your request was {decision.lower()} by {reviewer}. Comment: {comment}",
+                decision,source_type,source_id,"Approvals",reviewer)
 
 
 def _review_allowed(requester):

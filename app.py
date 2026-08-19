@@ -22,6 +22,7 @@ from trucks import render_trucks
 from ui import apply_theme, page_header, render_sidebar_brand
 from users_admin import render_user_management
 from approval_workflow import ensure_approval_schema, render_approval_centre
+from notifications import ensure_notification_schema, render_notifications, unread_count
 
 
 st.set_page_config(page_title="Fuel Inventory Control", page_icon="⛽", layout="wide", initial_sidebar_state="expanded")
@@ -29,6 +30,7 @@ conn = get_connection()
 init_db(conn)
 ensure_rbac_schema(conn)
 ensure_approval_schema(conn)
+ensure_notification_schema(conn)
 company = get_company_profile(conn)
 st.session_state["company_profile"] = company
 apply_theme(company)
@@ -48,6 +50,7 @@ menu = {
     "Truck Ledger": "Ledger",
     "Integration Inbox": "Bulk Upload",
     "Approvals": "Refill Approvals",
+    "Notifications": "Notifications",
     "Report Centre": "Reports",
     "Audit Centre": "Audit Log",
     "Configuration": "Settings",
@@ -73,6 +76,10 @@ def remember_page():
 if st.sidebar.button("⌂  Home · Command Centre", use_container_width=True, type="primary"):
     st.session_state["main_navigation"] = "Command Centre"
     st.query_params["page"] = "Command Centre"
+
+notice_total=unread_count(conn)
+if notice_total:
+    st.sidebar.info(f"🔔 {notice_total} unread notification{'s' if notice_total != 1 else ''}")
 
 selected = st.sidebar.radio("WORKSPACE", labels, key="main_navigation", on_change=remember_page)
 page = menu[selected]
@@ -116,6 +123,8 @@ elif page == "Bulk Upload":
     render_bulk_upload(conn, cursor, truck_dict, truck_list)
 elif page == "Refill Approvals":
     render_approval_centre(conn)
+elif page == "Notifications":
+    render_notifications(conn)
 elif page == "Audit Log":
     page_header("Audit Centre", "Investigate who performed an action, when it happened and what changed.")
     c1, c2, c3 = st.columns([1, 1, 2])

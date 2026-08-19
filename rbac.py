@@ -2,15 +2,15 @@ import streamlit as st
 
 ROLES=["ADMIN","INVENTORY_MANAGER","STOREKEEPER","PROCUREMENT_USER","APPROVER","AUDITOR","VIEWER","OPERATOR"]
 ROLE_LABELS={"ADMIN":"Administrator","INVENTORY_MANAGER":"Inventory Manager","STOREKEEPER":"Storekeeper","PROCUREMENT_USER":"Procurement User","APPROVER":"Approver","AUDITOR":"Auditor","VIEWER":"Read-only Viewer","OPERATOR":"Legacy Operator"}
-ALL_PAGES={"Command Centre","Fuel Operations","Fleet Inventory","Inventory Control","Transaction Control","Depots & Storage","Storage Operations","Supplier Procurement","Inventory Forecasting","Truck Ledger","Integration Inbox","Approvals","Report Centre","Audit Centre","Configuration","User Access"}
+ALL_PAGES={"Command Centre","Fuel Operations","Fleet Inventory","Inventory Control","Transaction Control","Depots & Storage","Storage Operations","Supplier Procurement","Inventory Forecasting","Truck Ledger","Integration Inbox","Approvals","Notifications","Report Centre","Audit Centre","Configuration","User Access"}
 PAGE_PERMISSIONS={
  "INVENTORY_MANAGER":ALL_PAGES-{"User Access","Configuration"},
- "STOREKEEPER":{"Command Centre","Fuel Operations","Fleet Inventory","Inventory Control","Depots & Storage","Storage Operations","Truck Ledger","Integration Inbox","Report Centre"},
- "PROCUREMENT_USER":{"Command Centre","Supplier Procurement","Storage Operations","Inventory Forecasting","Report Centre"},
- "APPROVER":{"Command Centre","Inventory Control","Transaction Control","Approvals","Supplier Procurement","Report Centre","Audit Centre"},
- "AUDITOR":{"Command Centre","Fleet Inventory","Inventory Control","Transaction Control","Depots & Storage","Supplier Procurement","Inventory Forecasting","Truck Ledger","Report Centre","Audit Centre"},
- "VIEWER":{"Command Centre","Fleet Inventory","Depots & Storage","Inventory Forecasting","Truck Ledger","Report Centre"},
- "OPERATOR":{"Command Centre","Fuel Operations","Fleet Inventory","Storage Operations","Truck Ledger","Integration Inbox","Approvals","Report Centre"},
+ "STOREKEEPER":{"Command Centre","Fuel Operations","Fleet Inventory","Inventory Control","Depots & Storage","Storage Operations","Truck Ledger","Integration Inbox","Notifications","Report Centre"},
+ "PROCUREMENT_USER":{"Command Centre","Supplier Procurement","Storage Operations","Inventory Forecasting","Notifications","Report Centre"},
+ "APPROVER":{"Command Centre","Inventory Control","Transaction Control","Approvals","Supplier Procurement","Notifications","Report Centre","Audit Centre"},
+ "AUDITOR":{"Command Centre","Fleet Inventory","Inventory Control","Transaction Control","Depots & Storage","Supplier Procurement","Inventory Forecasting","Truck Ledger","Notifications","Report Centre","Audit Centre"},
+ "VIEWER":{"Command Centre","Fleet Inventory","Depots & Storage","Inventory Forecasting","Truck Ledger","Notifications","Report Centre"},
+ "OPERATOR":{"Command Centre","Fuel Operations","Fleet Inventory","Storage Operations","Truck Ledger","Integration Inbox","Approvals","Notifications","Report Centre"},
 }
 ACTION_PERMISSIONS={
  "ADMIN":{"*"},"INVENTORY_MANAGER":{"*"},
