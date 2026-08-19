@@ -12,6 +12,7 @@ from openpyxl.worksheet.table import Table, TableStyleInfo
 from audit import record_event
 from procurement import booking_options, create_variance_claim, ensure_procurement_schema, refresh_booking_status, release_options
 from ui import page_header
+from approval_workflow import needs_approval, submit_approval_request
 
 
 REPORT_COLUMNS = [
@@ -476,7 +477,19 @@ def render_storage_operations(conn):
             if not reference.strip(): st.error("Delivery note or ticket reference is required.")
             elif purchase_type=="Advance booking" and not booking_id: st.error("An open booking is required for an advance-booking receipt.")
             else:
-                try: tx,variance=post_supplier_receipt(conn,int(tank["id"]),datetime.now(),ordered,dispatched,accepted,supplier_map[supplier],method,vehicle,driver,reference.strip(),notes,user,purchase_type,booking_id,release_id,booking_price if purchase_type=="Advance booking" else unit_price); st.success(f"STX-{tx} posted. Dispatch-to-accepted variance: {variance:+,.2f} L."); st.rerun()
+                try:
+                    receipt_price=booking_price if purchase_type=="Advance booking" else unit_price
+                    receipt_value=float(accepted)*float(receipt_price or 0)
+                    controlled=needs_approval(conn,"SUPPLIER_RECEIPT_QUANTITY",accepted) or needs_approval(conn,"SUPPLIER_RECEIPT_VALUE",receipt_value)
+                    if controlled:
+                        payload={"tank_id":int(tank["id"]),"movement_at":datetime.now().isoformat(),"ordered":ordered,"dispatched":dispatched,"accepted":accepted,
+                                 "supplier_id":int(supplier_map[supplier]),"method":method,"vehicle":vehicle,"driver":driver,"reference":reference.strip(),"notes":notes,
+                                 "purchase_type":purchase_type,"booking_id":booking_id,"release_id":release_id,"unit_price":receipt_price}
+                        request_id=submit_approval_request(conn,"SUPPLIER_RECEIPT",f"Supplier receipt · {selected} · {accepted:,.2f} L",payload,user,accepted,receipt_value)
+                        st.success(f"AP-{request_id} submitted for approval. Stock has not changed."); st.rerun()
+                    else:
+                        tx,variance=post_supplier_receipt(conn,int(tank["id"]),datetime.now(),ordered,dispatched,accepted,supplier_map[supplier],method,vehicle,driver,reference.strip(),notes,user,purchase_type,booking_id,release_id,receipt_price)
+                        st.success(f"STX-{tx} posted. Dispatch-to-accepted variance: {variance:+,.2f} L."); st.rerun()
                 except Exception as error: st.error(str(error))
     with tab_transfer:
         source=st.selectbox("Source tank",list(tank_map),key="tank_source"); destinations=[x for x in tank_map if x!=source]; destination=st.selectbox("Destination tank",destinations,key="tank_destination") if destinations else None

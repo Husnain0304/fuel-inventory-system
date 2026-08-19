@@ -1,4 +1,5 @@
 from datetime import datetime
+import json
 
 import pandas as pd
 import streamlit as st
@@ -29,6 +30,15 @@ def ensure_approval_schema(conn):
             requested_by TEXT, decided_by TEXT NOT NULL, comment TEXT NOT NULL,
             decided_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
             UNIQUE(source_module,source_type,source_id,decision))""")
+        cursor.execute("""CREATE TABLE IF NOT EXISTS approval_requests(
+            id BIGSERIAL PRIMARY KEY, request_kind TEXT NOT NULL,
+            title TEXT NOT NULL, quantity REAL, monetary_value REAL,
+            payload JSONB NOT NULL, status TEXT NOT NULL DEFAULT 'PENDING'
+                CHECK(status IN ('PENDING','APPROVED','REJECTED','POSTED','FAILED','CANCELLED')),
+            requested_by TEXT NOT NULL, requested_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            reviewed_by TEXT, reviewed_at TIMESTAMPTZ, review_comment TEXT,
+            posted_reference TEXT, failure_message TEXT)""")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_approval_requests_status ON approval_requests(status,requested_at)")
         for key, (threshold, unit, name) in DEFAULT_LIMITS.items():
             cursor.execute("""INSERT INTO approval_limits(rule_key,rule_name,threshold,unit)
                 VALUES (%s,%s,%s,%s) ON CONFLICT(rule_key) DO NOTHING""", (key, name, threshold, unit))
@@ -44,6 +54,23 @@ def approval_limit(conn, rule_key):
     cursor.execute("SELECT threshold,enabled FROM approval_limits WHERE rule_key=%s", (rule_key,))
     row = cursor.fetchone()
     return float(row[0]) if row and row[1] else None
+
+
+def needs_approval(conn, rule_key, amount):
+    threshold = approval_limit(conn, rule_key)
+    return threshold is not None and threshold > 0 and float(amount or 0) >= threshold
+
+
+def submit_approval_request(conn, request_kind, title, payload, requested_by, quantity=None, monetary_value=None):
+    ensure_approval_schema(conn)
+    cursor = conn.cursor()
+    cursor.execute("""INSERT INTO approval_requests
+        (request_kind,title,quantity,monetary_value,payload,requested_by)
+        VALUES (%s,%s,%s,%s,%s::jsonb,%s) RETURNING id""",
+        (request_kind,title,quantity,monetary_value,json.dumps(payload,default=str),requested_by))
+    request_id=cursor.fetchone()[0]; conn.commit()
+    record_event(conn,"SUBMIT_FOR_APPROVAL","Approval Centre","Approval Request",request_id,title)
+    return request_id
 
 
 def _record_decision(conn, module, source_type, source_id, decision, requester, reviewer, comment):
@@ -80,7 +107,81 @@ def _pending_counts(conn):
             cursor.execute(query); values.append(int(cursor.fetchone()[0]))
         except Exception:
             conn.rollback(); values.append(0); cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT COUNT(*) FROM approval_requests WHERE status='PENDING'")
+        values.append(int(cursor.fetchone()[0]))
+    except Exception:
+        conn.rollback(); values.append(0)
     return values
+
+
+def _execute_operational_request(conn, request_id, reviewer, comment):
+    cursor=conn.cursor()
+    cursor.execute("SELECT request_kind,payload,status,requested_by FROM approval_requests WHERE id=%s FOR UPDATE",(request_id,))
+    row=cursor.fetchone()
+    if not row or row[2] != "PENDING": raise ValueError("This request is no longer pending.")
+    kind,payload,_,requester=row
+    if isinstance(payload,str): payload=json.loads(payload)
+    cursor.execute("""UPDATE approval_requests SET status='APPROVED',reviewed_by=%s,
+        reviewed_at=CURRENT_TIMESTAMP,review_comment=%s,failure_message=NULL WHERE id=%s""",
+        (reviewer,comment,request_id))
+    conn.commit()
+    try:
+        if kind == "SUPPLIER_RECEIPT":
+            from storage_operations import post_supplier_receipt
+            movement_at=pd.to_datetime(payload["movement_at"]).to_pydatetime()
+            transaction_id,_=post_supplier_receipt(
+                conn,int(payload["tank_id"]),movement_at,float(payload["ordered"]),float(payload["dispatched"]),
+                float(payload["accepted"]),int(payload["supplier_id"]),payload["method"],payload.get("vehicle"),
+                payload.get("driver"),payload["reference"],payload.get("notes"),requester,payload.get("purchase_type","Credit purchase"),
+                int(payload["booking_id"]) if payload.get("booking_id") else None,
+                int(payload["release_id"]) if payload.get("release_id") else None,float(payload.get("unit_price") or 0))
+            reference=f"STX-{transaction_id}"
+        elif kind == "SUPPLIER_BOOKING":
+            cursor=conn.cursor()
+            cursor.execute("""INSERT INTO procurement_bookings
+                (booking_number,supplier_id,product_id,booking_date,valid_from,valid_to,booked_liters,unit_price,
+                 payment_terms,transport_responsibility,status,notes,created_by)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'OPEN',%s,%s) RETURNING id""",
+                (payload["booking_number"],int(payload["supplier_id"]),int(payload["product_id"]),payload["booking_date"],
+                 payload["booking_date"],payload["valid_to"],float(payload["liters"]),float(payload["unit_price"]),
+                 payload["payment_terms"],payload["transport"],payload.get("notes"),requester))
+            booking_id=cursor.fetchone()[0]; conn.commit(); reference=f"BK-{booking_id}"
+        else: raise ValueError("Unsupported approval request type.")
+        cursor=conn.cursor(); cursor.execute("""UPDATE approval_requests SET status='POSTED',reviewed_by=%s,
+            reviewed_at=CURRENT_TIMESTAMP,review_comment=%s,posted_reference=%s WHERE id=%s""",(reviewer,comment,reference,request_id)); conn.commit()
+        _record_decision(conn,"Operations",kind.replace("_"," ").title(),request_id,"APPROVED",requester,reviewer,comment)
+        return reference
+    except Exception as error:
+        conn.rollback(); cursor=conn.cursor(); cursor.execute("""UPDATE approval_requests SET status='PENDING',
+            reviewed_by=NULL,reviewed_at=NULL,review_comment=NULL,failure_message=%s WHERE id=%s""",(str(error),request_id)); conn.commit(); raise
+
+
+def _render_operational_requests(conn):
+    data=pd.read_sql_query("""SELECT id,request_kind,title,quantity,monetary_value,requested_by,requested_at
+        FROM approval_requests WHERE status='PENDING' ORDER BY requested_at,id""",conn)
+    if data.empty: st.success("No supplier receipts or bookings are waiting."); return
+    for item in data.itertuples():
+        with st.container(border=True):
+            st.markdown(f"### AP-{item.id} · {item.title}")
+            a,b,c=st.columns(3)
+            a.metric("Quantity",f"{item.quantity:,.2f} L" if pd.notna(item.quantity) else "—")
+            b.metric("Value",f"{item.monetary_value:,.2f}" if pd.notna(item.monetary_value) else "—")
+            c.metric("Type",str(item.request_kind).replace("_"," ").title())
+            st.caption(f"Requested by {item.requested_by} · {pd.to_datetime(item.requested_at):%d %b %Y %H:%M}")
+            comment=st.text_input("Decision comment",key=f"op_comment_{item.id}")
+            approve,reject=st.columns(2)
+            if approve.button("Approve and post",key=f"op_approve_{item.id}",type="primary",use_container_width=True):
+                if not comment.strip(): st.error("Enter a decision comment.")
+                elif _review_allowed(item.requested_by):
+                    try: reference=_execute_operational_request(conn,int(item.id),st.session_state["user"],comment.strip()); st.success(f"Approved and posted as {reference}."); st.rerun()
+                    except Exception as error: st.error(str(error))
+            if reject.button("Reject",key=f"op_reject_{item.id}",use_container_width=True):
+                if not comment.strip(): st.error("Enter a rejection reason.")
+                elif _review_allowed(item.requested_by):
+                    cursor=conn.cursor(); cursor.execute("""UPDATE approval_requests SET status='REJECTED',reviewed_by=%s,
+                        reviewed_at=CURRENT_TIMESTAMP,review_comment=%s WHERE id=%s AND status='PENDING'""",(st.session_state["user"],comment.strip(),item.id)); conn.commit()
+                    _record_decision(conn,"Operations",str(item.request_kind).replace("_"," ").title(),item.id,"REJECTED",item.requested_by,st.session_state["user"],comment.strip()); st.rerun()
 
 
 def _render_refills(conn):
@@ -177,12 +278,13 @@ def _render_changes(conn):
 def render_approval_centre(conn):
     ensure_approval_schema(conn)
     page_header("Approval Centre", "Review controlled inventory decisions from one queue with complete accountability.")
-    refills,reconciliations,changes=_pending_counts(conn)
-    a,b,c,d=st.columns(4); a.metric("Waiting approval",refills+reconciliations+changes); b.metric("Refills",refills); c.metric("Stock adjustments",reconciliations); d.metric("Corrections / reversals",changes)
+    refills,reconciliations,changes,operations=_pending_counts(conn)
+    a,b,c,d=st.columns(4); a.metric("Waiting approval",refills+reconciliations+changes+operations); b.metric("Operational requests",operations); c.metric("Stock adjustments",reconciliations); d.metric("Other controls",refills+changes)
     queue,policies,history=st.tabs(["Approval queue","Approval limits","Decision history"])
     with queue:
         if not can(st.session_state.get("role","VIEWER"),"APPROVE"):
             st.info("You can view the queue, but only an Approver, Inventory Manager or Administrator can make decisions.")
+        with st.expander(f"Supplier receipts and bookings · {operations}",expanded=bool(operations)): _render_operational_requests(conn)
         with st.expander(f"Refill requests · {refills}",expanded=bool(refills)): _render_refills(conn)
         with st.expander(f"Stock adjustments · {reconciliations}",expanded=bool(reconciliations)): _render_reconciliations(conn)
         with st.expander(f"Corrections and reversals · {changes}",expanded=bool(changes)): _render_changes(conn)

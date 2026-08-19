@@ -11,6 +11,7 @@ from openpyxl.worksheet.table import Table, TableStyleInfo
 
 from audit import record_event
 from ui import page_header
+from approval_workflow import needs_approval, submit_approval_request
 
 
 def ensure_procurement_schema(conn):
@@ -175,9 +176,22 @@ def render_procurement(conn):
             if not number.strip() or liters<=0: st.error("Booking number and a quantity greater than zero are required.")
             else:
                 try:
-                    cur=conn.cursor(); cur.execute("""INSERT INTO procurement_bookings(booking_number,supplier_id,product_id,booking_date,valid_from,valid_to,booked_liters,unit_price,payment_terms,transport_responsibility,status,notes,created_by)
-                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'OPEN',%s,%s) RETURNING id""",(number.strip(),supplier_map[supplier],product_map[product],booking_date,booking_date,valid_to,liters,price,terms,transport,notes or None,user)); booking_id=cur.fetchone()[0]; conn.commit()
-                    record_event(conn,"CREATE_BOOKING","Procurement","Supplier Booking",booking_id,f"Created booking {number.strip()} for {liters:,.2f} L"); st.success(f"Booking BK-{booking_id} created."); st.rerun()
+                    booking_value=float(liters)*float(price)
+                    if needs_approval(conn,"BOOKING_VALUE",booking_value):
+                        check=conn.cursor(); check.execute("""SELECT id FROM approval_requests
+                            WHERE request_kind='SUPPLIER_BOOKING' AND status='PENDING'
+                            AND payload->>'booking_number'=%s LIMIT 1""",(number.strip(),))
+                        duplicate=check.fetchone()
+                        if duplicate: raise ValueError(f"Booking {number.strip()} is already waiting as AP-{duplicate[0]}.")
+                        payload={"booking_number":number.strip(),"supplier_id":int(supplier_map[supplier]),"product_id":int(product_map[product]),
+                                 "booking_date":str(booking_date),"valid_to":str(valid_to),"liters":liters,"unit_price":price,
+                                 "payment_terms":terms,"transport":transport,"notes":notes or None}
+                        request_id=submit_approval_request(conn,"SUPPLIER_BOOKING",f"Supplier booking · {number.strip()} · {liters:,.2f} L",payload,user,liters,booking_value)
+                        st.success(f"AP-{request_id} submitted for approval. The booking is not active yet."); st.rerun()
+                    else:
+                        cur=conn.cursor(); cur.execute("""INSERT INTO procurement_bookings(booking_number,supplier_id,product_id,booking_date,valid_from,valid_to,booked_liters,unit_price,payment_terms,transport_responsibility,status,notes,created_by)
+                            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'OPEN',%s,%s) RETURNING id""",(number.strip(),supplier_map[supplier],product_map[product],booking_date,booking_date,valid_to,liters,price,terms,transport,notes or None,user)); booking_id=cur.fetchone()[0]; conn.commit()
+                        record_event(conn,"CREATE_BOOKING","Procurement","Supplier Booking",booking_id,f"Created booking {number.strip()} for {liters:,.2f} L"); st.success(f"Booking BK-{booking_id} created."); st.rerun()
                 except Exception as error: conn.rollback(); st.error(str(error))
     bookings=booking_options(conn)
     with tab_release:
