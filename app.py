@@ -11,6 +11,7 @@ from reconciliation import render_reconciliation
 from procurement import render_procurement
 from forecasting import render_forecasting
 from master_reports import render_master_reports
+from rbac import allowed_pages, ensure_rbac_schema
 from reports import render_reports
 from settings import render_settings
 from storage import render_storage
@@ -25,6 +26,7 @@ from users_admin import render_user_management
 st.set_page_config(page_title="Fuel Inventory Control", page_icon="⛽", layout="wide", initial_sidebar_state="expanded")
 conn = get_connection()
 init_db(conn)
+ensure_rbac_schema(conn)
 company = get_company_profile(conn)
 st.session_state["company_profile"] = company
 apply_theme(company)
@@ -48,8 +50,9 @@ menu = {
     "Audit Centre": "Audit Log",
     "Configuration": "Settings",
 }
-if st.session_state.get("role") == "ADMIN":
-    menu["User Access"] = "Manage Users"
+menu["User Access"] = "Manage Users"
+permitted=allowed_pages(st.session_state.get("role","VIEWER"))
+menu={label:page_name for label,page_name in menu.items() if label in permitted}
 
 labels = list(menu)
 requested = st.query_params.get("page", labels[0])
