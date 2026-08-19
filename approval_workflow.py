@@ -147,6 +147,33 @@ def _execute_operational_request(conn, request_id, reviewer, comment):
                  payload["booking_date"],payload["valid_to"],float(payload["liters"]),float(payload["unit_price"]),
                  payload["payment_terms"],payload["transport"],payload.get("notes"),requester))
             booking_id=cursor.fetchone()[0]; conn.commit(); reference=f"BK-{booking_id}"
+        elif kind == "CLAIM_RESOLUTION":
+            cursor=conn.cursor(); claim_id=int(payload["claim_id"]); target=payload["target_status"]
+            cursor.execute("SELECT status FROM supplier_claims WHERE id=%s FOR UPDATE",(claim_id,)); current=cursor.fetchone()
+            if not current or current[0] in ("CLOSED","REJECTED"): raise ValueError("This claim is already resolved or no longer exists.")
+            cursor.execute("""UPDATE supplier_claims SET status=%s,credit_note_number=%s,credit_note_date=%s,
+                notes=COALESCE(%s,notes),resolved_by=%s,resolved_at=CURRENT_TIMESTAMP WHERE id=%s""",
+                (target,payload.get("credit_note_number"),payload.get("credit_note_date"),payload.get("notes"),reviewer,claim_id))
+            conn.commit(); reference=f"CL-{claim_id}"
+        elif kind == "BOOKING_CANCELLATION":
+            cursor=conn.cursor(); booking_id=int(payload["booking_id"])
+            cursor.execute("SELECT status FROM procurement_bookings WHERE id=%s FOR UPDATE",(booking_id,)); current=cursor.fetchone()
+            if not current or current[0] not in ("OPEN","PARTIALLY_USED"): raise ValueError("This booking can no longer be cancelled.")
+            cursor.execute("""UPDATE procurement_bookings SET status='CANCELLED',closed_by=%s,
+                closed_at=CURRENT_TIMESTAMP,notes=CONCAT(COALESCE(notes,''),%s) WHERE id=%s""",
+                (reviewer,f"\nCancellation approved: {payload['reason']} · Ref: {payload['reference']}",booking_id))
+            cursor.execute("UPDATE procurement_releases SET status='CANCELLED' WHERE booking_id=%s AND status IN ('OPEN','PARTIALLY_RECEIVED')",(booking_id,))
+            conn.commit(); reference=f"BK-{booking_id}"
+        elif kind == "RELEASE_CANCELLATION":
+            cursor=conn.cursor(); release_id=int(payload["release_id"])
+            cursor.execute("SELECT status FROM procurement_releases WHERE id=%s FOR UPDATE",(release_id,)); current=cursor.fetchone()
+            if not current or current[0] != "OPEN": raise ValueError("This release can no longer be cancelled.")
+            cursor.execute("SELECT COALESCE(SUM(accepted_liters),0) FROM tank_transactions WHERE booking_release_id=%s",(release_id,))
+            if float(cursor.fetchone()[0] or 0)>0.005: raise ValueError("A release with received fuel cannot be cancelled.")
+            cursor.execute("""UPDATE procurement_releases SET status='CANCELLED',
+                notes=CONCAT(COALESCE(notes,''),%s) WHERE id=%s""",
+                (f"\nCancellation approved by {reviewer}: {payload['reason']} · Ref: {payload['reference']}",release_id))
+            conn.commit(); reference=f"RL-{release_id}"
         else: raise ValueError("Unsupported approval request type.")
         cursor=conn.cursor(); cursor.execute("""UPDATE approval_requests SET status='POSTED',reviewed_by=%s,
             reviewed_at=CURRENT_TIMESTAMP,review_comment=%s,posted_reference=%s WHERE id=%s""",(reviewer,comment,reference,request_id)); conn.commit()
@@ -158,7 +185,7 @@ def _execute_operational_request(conn, request_id, reviewer, comment):
 
 
 def _render_operational_requests(conn):
-    data=pd.read_sql_query("""SELECT id,request_kind,title,quantity,monetary_value,requested_by,requested_at
+    data=pd.read_sql_query("""SELECT id,request_kind,title,quantity,monetary_value,payload,requested_by,requested_at
         FROM approval_requests WHERE status='PENDING' ORDER BY requested_at,id""",conn)
     if data.empty: st.success("No supplier receipts or bookings are waiting."); return
     for item in data.itertuples():
@@ -169,6 +196,14 @@ def _render_operational_requests(conn):
             b.metric("Value",f"{item.monetary_value:,.2f}" if pd.notna(item.monetary_value) else "—")
             c.metric("Type",str(item.request_kind).replace("_"," ").title())
             st.caption(f"Requested by {item.requested_by} · {pd.to_datetime(item.requested_at):%d %b %Y %H:%M}")
+            details=item.payload if isinstance(item.payload,dict) else json.loads(item.payload)
+            if item.request_kind in ("BOOKING_CANCELLATION","RELEASE_CANCELLATION"):
+                st.write(f"**Reason:** {details.get('reason','—')}  |  **Supporting reference:** {details.get('reference','—')}")
+            elif item.request_kind == "CLAIM_RESOLUTION":
+                st.write(f"**Requested outcome:** {details.get('target_status','—')}  |  **Credit note:** {details.get('credit_note_number') or '—'}")
+                st.write(f"**Resolution notes:** {details.get('notes','—')}")
+            elif item.request_kind == "SUPPLIER_RECEIPT":
+                st.write(f"**Delivery reference:** {details.get('reference','—')}  |  **Accepted:** {float(details.get('accepted') or 0):,.2f} L")
             comment=st.text_input("Decision comment",key=f"op_comment_{item.id}")
             approve,reject=st.columns(2)
             if approve.button("Approve and post",key=f"op_approve_{item.id}",type="primary",use_container_width=True):

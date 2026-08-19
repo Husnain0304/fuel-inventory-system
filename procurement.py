@@ -164,7 +164,7 @@ def render_procurement(conn):
     suppliers=pd.read_sql_query("SELECT id,name FROM suppliers ORDER BY name",conn)
     products=pd.read_sql_query("SELECT id,name FROM products WHERE active=TRUE ORDER BY name",conn)
     supplier_map=dict(zip(suppliers["name"],suppliers["id"])); product_map=dict(zip(products["name"],products["id"]))
-    tab_overview,tab_booking,tab_release,tab_claims,tab_report=st.tabs(["Overview","New booking","Create release","Supplier claims","Reports"])
+    tab_overview,tab_booking,tab_release,tab_claims,tab_control,tab_report=st.tabs(["Overview","New booking","Create release","Supplier claims","Cancellation control","Reports"])
     with tab_booking:
         with st.form("new_procurement_booking"):
             a,b=st.columns(2); supplier=a.selectbox("Supplier",list(supplier_map)); product=b.selectbox("Product",list(product_map))
@@ -222,7 +222,72 @@ def render_procurement(conn):
             with st.form("claim_update"):
                 selected=st.selectbox("Claim",list(claim_map)); status=st.selectbox("New status",["SUBMITTED","ACKNOWLEDGED","CREDIT_NOTE_RECEIVED","CLOSED","REJECTED"]); credit=st.text_input("Credit note number"); credit_date=st.date_input("Credit note date",date.today()); notes=st.text_area("Resolution notes"); submit=st.form_submit_button("Update claim",type="primary")
             if submit:
-                cur=conn.cursor(); cur.execute("""UPDATE supplier_claims SET status=%s,credit_note_number=%s,credit_note_date=%s,notes=COALESCE(%s,notes),resolved_by=CASE WHEN %s IN ('CLOSED','REJECTED') THEN %s ELSE resolved_by END,resolved_at=CASE WHEN %s IN ('CLOSED','REJECTED') THEN CURRENT_TIMESTAMP ELSE resolved_at END WHERE id=%s""",(status,credit or None,credit_date if credit else None,notes or None,status,user,status,claim_map[selected])); conn.commit(); record_event(conn,"UPDATE_CLAIM","Procurement","Supplier Claim",claim_map[selected],f"Claim status changed to {status}"); st.success("Claim updated."); st.rerun()
+                claim_id=claim_map[selected]
+                if status in ("CLOSED","REJECTED"):
+                    if not notes.strip(): st.error("Resolution notes are required before closing or rejecting a claim.")
+                    else:
+                        check=conn.cursor(); check.execute("""SELECT id FROM approval_requests WHERE request_kind='CLAIM_RESOLUTION'
+                            AND status='PENDING' AND payload->>'claim_id'=%s LIMIT 1""",(str(claim_id),)); duplicate=check.fetchone()
+                        if duplicate: st.error(f"This claim is already waiting for approval as AP-{duplicate[0]}.")
+                        else:
+                            payload={"claim_id":claim_id,"target_status":status,"credit_note_number":credit or None,
+                                     "credit_note_date":str(credit_date) if credit else None,"notes":notes.strip()}
+                            request_id=submit_approval_request(conn,"CLAIM_RESOLUTION",f"Supplier claim {status.lower()} · CL-{claim_id}",payload,user)
+                            st.success(f"AP-{request_id} submitted. The claim remains unchanged until approval."); st.rerun()
+                else:
+                    cur=conn.cursor(); cur.execute("""UPDATE supplier_claims SET status=%s,credit_note_number=%s,
+                        credit_note_date=%s,notes=COALESCE(%s,notes) WHERE id=%s""",
+                        (status,credit or None,credit_date if credit else None,notes or None,claim_id)); conn.commit()
+                    record_event(conn,"UPDATE_CLAIM","Procurement","Supplier Claim",claim_id,f"Claim status changed to {status}"); st.success("Claim updated."); st.rerun()
+    with tab_control:
+        st.subheader("Controlled cancellations")
+        st.caption("Cancellation requests do not change booking or release balances until a different authorized user approves them.")
+        cancel_bookings=pd.read_sql_query("""SELECT b.id,b.booking_number,s.name AS supplier,p.name AS product,b.status,
+            b.booked_liters,COALESCE(SUM(tx.accepted_liters),0) AS received_liters
+            FROM procurement_bookings b JOIN suppliers s ON s.id=b.supplier_id JOIN products p ON p.id=b.product_id
+            LEFT JOIN tank_transactions tx ON tx.booking_id=b.id WHERE b.status IN ('OPEN','PARTIALLY_USED')
+            GROUP BY b.id,s.name,p.name ORDER BY b.id DESC""",conn)
+        cancel_releases=pd.read_sql_query("""SELECT r.id,r.release_number,b.booking_number,r.released_liters,r.status,
+            COALESCE(SUM(tx.accepted_liters),0) AS received_liters
+            FROM procurement_releases r JOIN procurement_bookings b ON b.id=r.booking_id
+            LEFT JOIN tank_transactions tx ON tx.booking_release_id=r.id WHERE r.status='OPEN'
+            GROUP BY r.id,b.booking_number ORDER BY r.id DESC""",conn)
+        booking_cancel,release_cancel=st.tabs(["Cancel booking","Cancel release"])
+        with booking_cancel:
+            if cancel_bookings.empty: st.info("No open bookings are available for cancellation.")
+            else:
+                booking_choices={f"BK-{int(r.id)} · {r.booking_number} · {r.supplier} · {r.booked_liters-r.received_liters:,.2f} L remaining":int(r.id) for r in cancel_bookings.itertuples()}
+                with st.form("booking_cancellation_request"):
+                    selected_booking=st.selectbox("Booking",list(booking_choices)); reason=st.text_area("Cancellation reason"); reference=st.text_input("Authorization / supporting reference"); submit_cancel=st.form_submit_button("Submit booking cancellation",type="primary")
+                if submit_cancel:
+                    booking_id=booking_choices[selected_booking]
+                    if len(reason.strip())<5 or not reference.strip(): st.error("Enter a clear reason and supporting reference.")
+                    else:
+                        check=conn.cursor(); check.execute("""SELECT id FROM approval_requests WHERE request_kind='BOOKING_CANCELLATION'
+                            AND status='PENDING' AND payload->>'booking_id'=%s LIMIT 1""",(str(booking_id),)); duplicate=check.fetchone()
+                        if duplicate: st.error(f"This booking is already waiting as AP-{duplicate[0]}.")
+                        else:
+                            request_id=submit_approval_request(conn,"BOOKING_CANCELLATION",f"Cancel supplier booking · BK-{booking_id}",
+                                {"booking_id":booking_id,"reason":reason.strip(),"reference":reference.strip()},user)
+                            st.success(f"AP-{request_id} submitted. The booking remains active until approval."); st.rerun()
+        with release_cancel:
+            available_releases=cancel_releases[cancel_releases["received_liters"]<=0.005] if not cancel_releases.empty else cancel_releases
+            if available_releases.empty: st.info("No unused open releases are available for cancellation.")
+            else:
+                release_choices={f"RL-{int(r.id)} · {r.release_number} · {r.booking_number} · {r.released_liters:,.2f} L":int(r.id) for r in available_releases.itertuples()}
+                with st.form("release_cancellation_request"):
+                    selected_release=st.selectbox("Release",list(release_choices)); reason=st.text_area("Cancellation reason",key="release_cancel_reason"); reference=st.text_input("Authorization / supporting reference",key="release_cancel_reference"); submit_cancel=st.form_submit_button("Submit release cancellation",type="primary")
+                if submit_cancel:
+                    release_id=release_choices[selected_release]
+                    if len(reason.strip())<5 or not reference.strip(): st.error("Enter a clear reason and supporting reference.")
+                    else:
+                        check=conn.cursor(); check.execute("""SELECT id FROM approval_requests WHERE request_kind='RELEASE_CANCELLATION'
+                            AND status='PENDING' AND payload->>'release_id'=%s LIMIT 1""",(str(release_id),)); duplicate=check.fetchone()
+                        if duplicate: st.error(f"This release is already waiting as AP-{duplicate[0]}.")
+                        else:
+                            request_id=submit_approval_request(conn,"RELEASE_CANCELLATION",f"Cancel supplier release · RL-{release_id}",
+                                {"release_id":release_id,"reason":reason.strip(),"reference":reference.strip()},user)
+                            st.success(f"AP-{request_id} submitted. The release remains open until approval."); st.rerun()
     with tab_report:
         all_bookings=pd.read_sql_query("SELECT * FROM procurement_bookings ORDER BY id DESC",conn); releases=pd.read_sql_query("SELECT * FROM procurement_releases ORDER BY id DESC",conn); claims=pd.read_sql_query("SELECT * FROM supplier_claims ORDER BY id DESC",conn)
         report=_report(all_bookings,releases,claims,st.session_state.get("company_profile",{})); st.download_button("Download procurement report",report,f"procurement_{datetime.now():%Y%m%d_%H%M%S}.xlsx","application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",type="primary")
