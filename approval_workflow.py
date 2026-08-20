@@ -24,6 +24,7 @@ DEFAULT_SLA_RULES = {
     "CLAIM_RESOLUTION": (24, 4, "MEDIUM"),
     "BOOKING_CANCELLATION": (8, 2, "HIGH"),
     "RELEASE_CANCELLATION": (8, 2, "HIGH"),
+    "COST_POLICY_CHANGE": (24, 4, "HIGH"),
 }
 
 
@@ -230,6 +231,14 @@ def _execute_operational_request(conn, request_id, reviewer, comment):
                 notes=CONCAT(COALESCE(notes,''),%s) WHERE id=%s""",
                 (f"\nCancellation approved by {reviewer}: {payload['reason']} · Ref: {payload['reference']}",release_id))
             conn.commit(); reference=f"RL-{release_id}"
+        elif kind == "COST_POLICY_CHANGE":
+            cursor=conn.cursor(); product_id=int(payload["product_id"])
+            cursor.execute("""UPDATE product_cost_policies SET status='SUPERSEDED'
+                WHERE product_id=%s AND effective_from=%s AND status='ACTIVE'""",(product_id,payload["effective_from"]))
+            cursor.execute("""INSERT INTO product_cost_policies(product_id,effective_from,default_unit_cost,reason,
+                reference,status,approved_request_id,created_by) VALUES (%s,%s,%s,%s,%s,'ACTIVE',%s,%s) RETURNING id""",
+                (product_id,payload["effective_from"],float(payload["unit_cost"]),payload["reason"],payload["reference"],request_id,requester))
+            policy_id=cursor.fetchone()[0]; conn.commit(); reference=f"CP-{policy_id}"
         else: raise ValueError("Unsupported approval request type.")
         cursor=conn.cursor(); cursor.execute("""UPDATE approval_requests SET status='POSTED',reviewed_by=%s,
             reviewed_at=CURRENT_TIMESTAMP,review_comment=%s,posted_reference=%s WHERE id=%s""",(reviewer,comment,reference,request_id)); conn.commit()

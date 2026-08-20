@@ -23,6 +23,7 @@ from ui import apply_theme, page_header, render_sidebar_brand
 from users_admin import render_user_management
 from approval_workflow import ensure_approval_schema, process_approval_escalations, render_approval_centre
 from user_notifications import ensure_notification_schema, render_notifications, render_request_confirmation, unread_count
+from valuation import ensure_valuation_schema, render_valuation
 
 
 st.set_page_config(page_title="Fuel Inventory Control", page_icon="⛽", layout="wide", initial_sidebar_state="expanded")
@@ -34,6 +35,9 @@ company = get_company_profile(conn)
 st.session_state["company_profile"] = company
 apply_theme(company)
 require_login(conn)
+if not st.session_state.get("valuation_schema_ready"):
+    ensure_valuation_schema(conn)
+    st.session_state["valuation_schema_ready"] = True
 if not st.session_state.get("notification_schema_ready"):
     ensure_notification_schema(conn)
     st.session_state["notification_schema_ready"] = True
@@ -52,6 +56,7 @@ menu = {
     "Storage Operations": "Storage Operations",
     "Supplier Procurement": "Procurement",
     "Inventory Forecasting": "Forecasting",
+    "Financial Valuation": "Valuation",
     "Truck Ledger": "Ledger",
     "Integration Inbox": "Bulk Upload",
     "Approvals": "Refill Approvals",
@@ -119,6 +124,8 @@ elif page == "Procurement":
     render_procurement(conn)
 elif page == "Forecasting":
     render_forecasting(conn)
+elif page == "Valuation":
+    render_valuation(conn)
 elif page == "Reports":
     render_master_reports(conn)
 elif page == "Ledger":
