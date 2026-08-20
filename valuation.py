@@ -157,7 +157,7 @@ def _write_table(ws,frame,start_row,name,profile):
 
 def build_valuation_report(position,ledger,claims,commitments,profile,as_of):
     wb=Workbook(); summary=wb.active; summary.title="Executive Summary"; currency=profile.get("currency","AED")
-    _style_sheet(summary,f"{profile.get('company_name','Company')} | Inventory Valuation",f"Moving weighted-average valuation as of {as_of:%d %b %Y} · Currency: {currency}",8)
+    _style_sheet(summary,f"{profile.get('company_name','Company')} | Inventory Valuation",f"Moving weighted-average valuation as of {as_of:%d %b %Y} · Currency: {currency}",profile,8)
     total_qty=float(position["Quantity (L)"].sum()) if not position.empty else 0; total_value=float(position["Inventory Value"].sum()) if not position.empty else 0
     open_claims=float(claims.loc[~claims["status"].isin(["CLOSED","REJECTED"]),"claim_amount"].sum()) if not claims.empty else 0; open_commit=float(commitments.loc[~commitments["status"].isin(["COMPLETED","CANCELLED","EXPIRED"]),"open_commitment"].sum()) if not commitments.empty else 0
     cards=[("Inventory quantity",total_qty,'#,##0.00 "L"'),("Inventory value",total_value,'#,##0.00'),("Open supplier claims",open_claims,'#,##0.00'),("Open booking commitments",open_commit,'#,##0.00')]
@@ -166,7 +166,7 @@ def build_valuation_report(position,ledger,claims,commitments,profile,as_of):
         summary.merge_cells(start_row=6,start_column=col,end_row=7,end_column=col+1); summary.cell(6,col,value); summary.cell(6,col).number_format=fmt; summary.cell(6,col).font=Font(size=18,bold=True,color="172033"); summary.cell(6,col).alignment=Alignment(vertical="center")
     by_product=position.groupby("Product",as_index=False).agg(**{"Quantity (L)":("Quantity (L)","sum"),"Inventory Value":("Inventory Value","sum")}) if not position.empty else pd.DataFrame(columns=["Product","Quantity (L)","Inventory Value"])
     _write_table(summary,by_product,10,"SummaryByProduct",profile); summary.column_dimensions["A"].width=26
-    assumptions=wb.create_sheet("Methodology & Checks"); _style_sheet(assumptions,"Valuation Methodology & Control Checks","Audit notes, assumptions and reconciliation controls",6)
+    assumptions=wb.create_sheet("Methodology & Checks"); _style_sheet(assumptions,"Valuation Methodology & Control Checks","Audit notes, assumptions and reconciliation controls",profile,6)
     assumptions.append([]); assumptions.append(["Control","Actual","Expected","Difference","Status","Notes"])
     checks=[("Position quantity vs ledger",total_qty,float(ledger.groupby(["Asset Type","Asset"])["Closing Quantity (L)"].last().sum()) if not ledger.empty else 0,"Latest movement balance must equal position"),("Position value vs ledger",total_value,float(ledger.groupby(["Asset Type","Asset"])["Closing Value"].last().sum()) if not ledger.empty else 0,"Latest movement value must equal position"),("Negative asset balances",float((position["Quantity (L)"]<-0.005).sum()) if not position.empty else 0,0,"Negative stock requires operational investigation")]
     for idx,(label,actual,expected,note) in enumerate(checks,6):
@@ -178,7 +178,7 @@ def build_valuation_report(position,ledger,claims,commitments,profile,as_of):
     assumptions["A15"]="Important"; assumptions["B15"]="Management inventory valuation; accounting posting remains in the finance system"
     assumptions.column_dimensions["A"].width=30; assumptions.column_dimensions["B"].width=34; assumptions.column_dimensions["F"].width=48
     for name,frame,title in (("Inventory Position",position,"Inventory Position"),("Cost Movement Ledger",ledger,"Cost Movement Ledger"),("Supplier Exposure",commitments,"Supplier Commitments"),("Claims",claims,"Supplier Claims")):
-        ws=wb.create_sheet(name); _style_sheet(ws,title,f"As of {as_of:%d %b %Y} · {currency}",max(len(frame.columns),6)); _write_table(ws,frame,5,name.replace(" ","")[:20]+"Table",profile)
+        ws=wb.create_sheet(name); _style_sheet(ws,title,f"As of {as_of:%d %b %Y} · {currency}",profile,max(len(frame.columns),6)); _write_table(ws,frame,5,name.replace(" ","")[:20]+"Table",profile)
     output=io.BytesIO(); wb.save(output); return output.getvalue()
 
 
