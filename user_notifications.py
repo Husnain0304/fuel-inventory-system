@@ -188,7 +188,14 @@ def _render_my_requests(conn):
                                 WHERE id=%s AND status='PENDING' AND LOWER(requested_by)=LOWER(%s)""",(reason.strip(),int(item.id),username))
                             if cursor.rowcount!=1: conn.rollback(); st.error("This request is no longer available for withdrawal.")
                             else:
-                                conn.commit(); add_request_message(conn,int(item.id),"WITHDRAWAL",reason,username); notify_approval_team(conn,f"Request withdrawn · AP-{item.id}",reason,item.request_kind,item.id,username); st.success("Request withdrawn. No operational change was posted."); st.rerun()
+                                conn.commit()
+                                if item.request_kind in ("PERIOD_CLOSE","PERIOD_REOPEN"):
+                                    cursor=conn.cursor(); cursor.execute("SELECT payload FROM approval_requests WHERE id=%s",(int(item.id),)); payload=cursor.fetchone()[0]
+                                    if isinstance(payload,str):
+                                        import json; payload=json.loads(payload)
+                                    target_status="OPEN" if item.request_kind=="PERIOD_CLOSE" else "CLOSED"
+                                    cursor.execute("UPDATE inventory_periods SET status=%s WHERE id=%s",(target_status,int(payload["period_id"]))); conn.commit()
+                                add_request_message(conn,int(item.id),"WITHDRAWAL",reason,username); notify_approval_team(conn,f"Request withdrawn · AP-{item.id}",reason,item.request_kind,item.id,username); st.success("Request withdrawn. No operational change was posted."); st.rerun()
 
 
 def render_notifications(conn):

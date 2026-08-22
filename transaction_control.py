@@ -119,6 +119,12 @@ def _post_request(conn, request_id, reviewer, comment):
         if any((row[7] or None) not in (None, *(original_ids)) for row in originals):
             raise ValueError("The transfer links no longer match this request.")
 
+        from period_close import assert_period_open
+        for original in originals:
+            assert_period_open(conn, original[2])
+        if request_type == "CORRECTION":
+            assert_period_open(conn, new_date or originals[0][2])
+
         reversal_ids = []
         for original in originals:
             reversal_ids.append(_insert_mirror(cursor,original,reviewer,reason))

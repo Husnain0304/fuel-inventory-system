@@ -25,6 +25,8 @@ DEFAULT_SLA_RULES = {
     "BOOKING_CANCELLATION": (8, 2, "HIGH"),
     "RELEASE_CANCELLATION": (8, 2, "HIGH"),
     "COST_POLICY_CHANGE": (24, 4, "HIGH"),
+    "PERIOD_CLOSE": (24, 4, "CRITICAL"),
+    "PERIOD_REOPEN": (8, 2, "CRITICAL"),
 }
 
 
@@ -239,6 +241,12 @@ def _execute_operational_request(conn, request_id, reviewer, comment):
                 reference,status,approved_request_id,created_by) VALUES (%s,%s,%s,%s,%s,'ACTIVE',%s,%s) RETURNING id""",
                 (product_id,payload["effective_from"],float(payload["unit_cost"]),payload["reason"],payload["reference"],request_id,requester))
             policy_id=cursor.fetchone()[0]; conn.commit(); reference=f"CP-{policy_id}"
+        elif kind == "PERIOD_CLOSE":
+            from period_close import execute_period_close
+            reference=execute_period_close(conn,int(payload["period_id"]),reviewer,request_id)
+        elif kind == "PERIOD_REOPEN":
+            from period_close import execute_period_reopen
+            reference=execute_period_reopen(conn,int(payload["period_id"]),reviewer,request_id)
         else: raise ValueError("Unsupported approval request type.")
         cursor=conn.cursor(); cursor.execute("""UPDATE approval_requests SET status='POSTED',reviewed_by=%s,
             reviewed_at=CURRENT_TIMESTAMP,review_comment=%s,posted_reference=%s WHERE id=%s""",(reviewer,comment,reference,request_id)); conn.commit()
@@ -300,6 +308,10 @@ def _render_operational_requests(conn):
                 elif _review_allowed(item.requested_by):
                     cursor=conn.cursor(); cursor.execute("""UPDATE approval_requests SET status='REJECTED',reviewed_by=%s,
                         reviewed_at=CURRENT_TIMESTAMP,review_comment=%s WHERE id=%s AND status='PENDING'""",(st.session_state["user"],comment.strip(),item.id)); conn.commit()
+                    if item.request_kind in ("PERIOD_CLOSE","PERIOD_REOPEN"):
+                        details=item.payload if isinstance(item.payload,dict) else json.loads(item.payload)
+                        target_status="OPEN" if item.request_kind=="PERIOD_CLOSE" else "CLOSED"
+                        cursor=conn.cursor(); cursor.execute("UPDATE inventory_periods SET status=%s WHERE id=%s",(target_status,int(details["period_id"]))); conn.commit()
                     _record_decision(conn,"Operations",str(item.request_kind).replace("_"," ").title(),item.id,"REJECTED",item.requested_by,st.session_state["user"],comment.strip()); st.rerun()
 
 
@@ -325,6 +337,8 @@ def _render_refills(conn):
                     try:
                         cursor.execute("SELECT status FROM refill_requests WHERE id=%s FOR UPDATE",(item.id,))
                         if cursor.fetchone()[0] != "PENDING": raise ValueError("This request is no longer pending.")
+                        from period_close import assert_period_open
+                        assert_period_open(conn, datetime.now().date())
                         cursor.execute("""INSERT INTO transactions(truck_id,date,liters,type,created_by,movement_category)
                             VALUES (%s,CURRENT_DATE,%s,'IN',%s,'REFILL_APPROVAL') RETURNING id""",
                             (item.truck_id,item.requested_liters,st.session_state["user"]))

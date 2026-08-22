@@ -367,6 +367,8 @@ def _truck_balance(cursor,truck_id):
 
 def post_supplier_receipt(conn,tank_id,movement_at,ordered,dispatched,accepted,supplier_id,method,vehicle,driver,reference,notes,user,
                           purchase_type="Credit purchase",booking_id=None,release_id=None,unit_price=0.0):
+    from period_close import assert_period_open
+    assert_period_open(conn,movement_at)
     cursor=conn.cursor()
     try:
         cursor.execute("SELECT product_id,safe_capacity_liters,status FROM storage_tanks WHERE id=%s FOR UPDATE",(tank_id,)); tank=cursor.fetchone()
@@ -402,6 +404,8 @@ def post_supplier_receipt(conn,tank_id,movement_at,ordered,dispatched,accepted,s
 
 
 def post_tank_transfer(conn,source_id,destination_id,movement_at,liters,reference,notes,user):
+    from period_close import assert_period_open
+    assert_period_open(conn,movement_at)
     cursor=conn.cursor()
     try:
         cursor.execute("SELECT id,product_id,safe_capacity_liters,status FROM storage_tanks WHERE id=ANY(%s) ORDER BY id FOR UPDATE",(sorted([source_id,destination_id]),)); rows={r[0]:r for r in cursor.fetchall()}
@@ -422,6 +426,8 @@ def post_tank_transfer(conn,source_id,destination_id,movement_at,liters,referenc
 
 
 def post_tank_truck(conn,tank_id,truck_id,movement_at,liters,direction,reference,notes,user):
+    from period_close import assert_period_open
+    assert_period_open(conn,movement_at)
     cursor=conn.cursor()
     try:
         cursor.execute("SELECT product_id,safe_capacity_liters,status FROM storage_tanks WHERE id=%s FOR UPDATE",(tank_id,)); tank=cursor.fetchone()

@@ -1,0 +1,44 @@
+MONTH-END INVENTORY CLOSING V1
+
+Upload these 9 complete replacement files to the root of the GitHub foundation-v2 branch:
+
+1. app.py
+2. approval_workflow.py
+3. period_close.py (new file)
+4. rbac.py
+5. reconciliation.py
+6. storage_operations.py
+7. transaction_control.py
+8. transactions.py
+9. user_notifications.py
+
+GitHub steps:
+1. Open the fuel-inventory-system repository.
+2. Confirm the branch selector says foundation-v2.
+3. Select Add file, then Upload files.
+4. Drag all 9 files listed above into GitHub together.
+5. Select Commit directly to the foundation-v2 branch.
+6. Click Commit changes.
+
+Streamlit steps:
+1. Wait for the app to redeploy automatically.
+2. Open the app from Streamlit Community Cloud.
+3. If it still shows the earlier version after a few minutes, use Manage app and Reboot once.
+4. Do not reset or delete the database. The new tables are created automatically.
+
+First test:
+1. Sign in as Administrator or Inventory Manager.
+2. Open Month-End Closing.
+3. Create a test period using a date range that does not contain important live records.
+4. Run closing checks.
+5. Resolve any red blocker; amber warnings may remain with management review.
+6. Submit the close. Note the AP number.
+7. Sign in as a different Approver or Administrator account and approve it in Approvals.
+8. Return to Month-End Closing and download the closing certificate.
+9. Try to post a movement dated inside the closed period. The system must block it.
+10. Submit a reopening request, approve it using a different account, then confirm dated posting is available again.
+
+Important:
+- A user cannot approve their own close or reopen request.
+- Closed periods block dated truck movements, transfers, storage movements, reconciliations, corrections and reversals.
+- Closing saves a locked valuation snapshot and full audit history.

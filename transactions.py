@@ -53,6 +53,8 @@ def get_truck_controls(conn, truck_id):
 
 def create_safe_transfer(conn, source_id, dest_id, transfer_date, liters, user):
     """Create and verify both sides of a transfer in one database transaction."""
+    from period_close import assert_period_open
+    assert_period_open(conn, transfer_date)
     cursor = conn.cursor()
     try:
         cursor.execute(
@@ -402,6 +404,11 @@ def render_transactions(conn, cursor, truck_dict, truck_list):
                 elif truck_controls["capacity"] and balance + in_liters > truck_controls["capacity"]:
                     st.error(f"Tank capacity exceeded. Available space: {max(truck_controls['capacity']-balance,0):,.2f} L.")
                 else:
+                    from period_close import assert_period_open
+                    try:
+                        assert_period_open(conn, in_date)
+                    except ValueError as error:
+                        st.error(str(error)); st.stop()
                     supplier_id = supplier_dict.get(selected_supplier_name, None)
                     cursor.execute("""
                         INSERT INTO transactions (truck_id, date, liters, type, supplier_id, created_by, product_id, movement_category)
@@ -451,6 +458,11 @@ def render_transactions(conn, cursor, truck_dict, truck_list):
                 elif out_liters > balance:
                     st.error("❌ Insufficient balance in this truck!")
                 else:
+                    from period_close import assert_period_open
+                    try:
+                        assert_period_open(conn, out_date)
+                    except ValueError as error:
+                        st.error(str(error)); st.stop()
                     cursor.execute("""
                         INSERT INTO transactions (truck_id, date, liters, type, created_by, product_id, movement_category)
                         VALUES (%s, %s, %s, 'OUT', %s, %s, 'DELIVERY')
