@@ -34,6 +34,7 @@ LINK_TYPES = {
 
 ALLOWED_EXTENSIONS = {"pdf", "png", "jpg", "jpeg", "xlsx", "xls", "csv", "docx", "txt"}
 MAX_FILE_SIZE = 8 * 1024 * 1024
+DOCUMENT_CENTRE_VERSION = "1.1.0"
 MANAGE_ROLES = {"ADMIN", "INVENTORY_MANAGER", "STOREKEEPER", "PROCUREMENT_USER", "OPERATOR"}
 RESTRICTED_ROLES = {"ADMIN", "INVENTORY_MANAGER", "APPROVER", "AUDITOR"}
 
@@ -177,7 +178,8 @@ def _render_register(conn, documents):
     if search.strip(): view=view[view.astype(str).agg(" ".join,axis=1).str.contains(search.strip(),case=False,na=False)]
     role=st.session_state.get("role","VIEWER")
     if role not in RESTRICTED_ROLES:
-        view=view[view["confidentiality"]!="RESTRICTED"]
+        allowed_rows=view["confidentiality"].astype(str).ne("RESTRICTED")
+        view=view.loc[allowed_rows].copy()
     st.dataframe(view.drop(columns=["sha256","mime_type"],errors="ignore"),use_container_width=True,hide_index=True,height=440,
         column_config={"file_size":st.column_config.NumberColumn("File size",format="%d bytes"),"current_version":st.column_config.NumberColumn("Version",format="v%d")})
 
@@ -186,7 +188,7 @@ def render_document_centre(conn):
     ensure_document_schema(conn); page_header("Document & Evidence Centre","Keep every operational and financial document linked, versioned and audit-ready.")
     user=st.session_state.get("user","System"); documents=_documents(conn); active=int((documents["status"]=="ACTIVE").sum()) if not documents.empty else 0; restricted=int((documents["confidentiality"]=="RESTRICTED").sum()) if not documents.empty else 0
     a,b,c=st.columns(3); a.metric("Registered documents",len(documents)); b.metric("Active evidence",active); c.metric("Restricted",restricted)
-    register,upload,record,activity=st.tabs(["Document register","Upload evidence","Open document","Access history"])
+    register,upload,record,archived,activity=st.tabs(["Document register","Upload evidence","Open document","Archived documents","Access history"])
     with register: _render_register(conn,documents)
     with upload:
         if not _can_manage(): st.info("Your role can review evidence but cannot upload or change it.")
@@ -208,7 +210,13 @@ def render_document_centre(conn):
     with record:
         if documents.empty: st.info("Upload the first evidence document to open it here.")
         else:
-            visible=documents[documents.apply(lambda row:_can_read(row["confidentiality"]),axis=1)]
+            role=st.session_state.get("role","VIEWER")
+            if role in RESTRICTED_ROLES:
+                visible=documents.copy()
+            else:
+                allowed_rows=documents["confidentiality"].astype(str).ne("RESTRICTED")
+                visible=documents.loc[allowed_rows].copy()
+            visible=visible.loc[visible["status"].astype(str).eq("ACTIVE")].copy()
             if visible.empty: st.info("No documents are available for your role.")
             else:
                 choices={f"{r.document_number} · {r.title} · v{r.current_version}":int(r.id) for r in visible.itertuples()}; chosen=st.selectbox("Document",list(choices)); document_id=choices[chosen]; item=visible[visible["id"]==document_id].iloc[0]
@@ -232,6 +240,29 @@ def render_document_centre(conn):
                             else:
                                 try: _archive(conn,document_id,archive_reason.strip(),user); st.success("Document archived. Its files and history remain available."); st.rerun()
                                 except Exception as error: st.error(str(error))
+    with archived:
+        role=st.session_state.get("role","VIEWER")
+        archived_documents=documents.loc[documents["status"].astype(str).eq("ARCHIVED")].copy() if not documents.empty else documents.copy()
+        if role not in RESTRICTED_ROLES and not archived_documents.empty:
+            allowed_rows=archived_documents["confidentiality"].astype(str).ne("RESTRICTED")
+            archived_documents=archived_documents.loc[allowed_rows].copy()
+        if archived_documents.empty:
+            st.info("No archived documents are available for your role.")
+        else:
+            st.caption("Archived evidence is preserved for audit and historical review. It cannot be changed or replaced.")
+            st.dataframe(archived_documents.drop(columns=["sha256","mime_type"],errors="ignore"),use_container_width=True,hide_index=True,height=300)
+            archived_choices={f"{r.document_number} · {r.title} · v{r.current_version}":int(r.id) for r in archived_documents.itertuples()}
+            archived_chosen=st.selectbox("Archived document",list(archived_choices),key="archived_document_selector")
+            archived_id=archived_choices[archived_chosen]
+            archived_item=archived_documents[archived_documents["id"]==archived_id].iloc[0]
+            st.markdown(f"### {archived_item['document_number']} · {archived_item['title']}")
+            st.caption(f"{archived_item['category']} · Archived evidence · {archived_item['confidentiality']} · Created by {archived_item['created_by']}")
+            archived_versions=pd.read_sql_query("SELECT version_number,file_name,mime_type,file_size,version_note,uploaded_by,uploaded_at FROM document_versions WHERE document_id=%s ORDER BY version_number DESC",conn,params=[archived_id])
+            st.dataframe(archived_versions,use_container_width=True,hide_index=True)
+            archived_version=int(st.selectbox("Archived version to download",archived_versions["version_number"].tolist(),key="archived_version_selector"))
+            cursor=conn.cursor(); cursor.execute("SELECT file_name,mime_type,file_content FROM document_versions WHERE document_id=%s AND version_number=%s",(archived_id,archived_version)); archived_name,archived_mime,archived_content=cursor.fetchone()
+            if st.download_button(f"Download archived file · {archived_name}",bytes(archived_content),archived_name,archived_mime,type="primary"):
+                _access(conn,archived_id,archived_version,"DOWNLOAD_ARCHIVED",archived_name); record_event(conn,"DOWNLOAD_ARCHIVED_DOCUMENT","Evidence Centre","Document",archived_id,f"Downloaded archived version {archived_version}: {archived_name}")
     with activity:
         history=pd.read_sql_query("""SELECT l.action_at AS "Date & Time",CONCAT('DOC-',l.document_id) AS "Document",
             l.version_number AS "Version",l.action AS "Action",l.username AS "User",l.detail AS "Detail"
