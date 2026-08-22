@@ -175,7 +175,9 @@ def _render_register(conn, documents):
     if category: view=view[view["category"].isin(category)]
     if link: view=view[view["entity_type"].isin(link)]
     if search.strip(): view=view[view.astype(str).agg(" ".join,axis=1).str.contains(search.strip(),case=False,na=False)]
-    role=st.session_state.get("role","VIEWER"); view=view[(view["confidentiality"]!="RESTRICTED") | role in RESTRICTED_ROLES]
+    role=st.session_state.get("role","VIEWER")
+    if role not in RESTRICTED_ROLES:
+        view=view[view["confidentiality"]!="RESTRICTED"]
     st.dataframe(view.drop(columns=["sha256","mime_type"],errors="ignore"),use_container_width=True,hide_index=True,height=440,
         column_config={"file_size":st.column_config.NumberColumn("File size",format="%d bytes"),"current_version":st.column_config.NumberColumn("Version",format="v%d")})
 
