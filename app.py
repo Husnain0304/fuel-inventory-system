@@ -25,6 +25,7 @@ from approval_workflow import ensure_approval_schema, process_approval_escalatio
 from user_notifications import ensure_notification_schema, render_notifications, render_request_confirmation, unread_count
 from valuation import ensure_valuation_schema, render_valuation
 from period_close import ensure_period_close_schema, render_period_close
+from document_centre import ensure_document_schema, render_document_centre
 
 
 st.set_page_config(page_title="Fuel Inventory Control", page_icon="⛽", layout="wide", initial_sidebar_state="expanded")
@@ -42,6 +43,9 @@ if not st.session_state.get("valuation_schema_ready"):
 if not st.session_state.get("period_close_schema_ready"):
     ensure_period_close_schema(conn)
     st.session_state["period_close_schema_ready"] = True
+if not st.session_state.get("document_schema_ready"):
+    ensure_document_schema(conn)
+    st.session_state["document_schema_ready"] = True
 if not st.session_state.get("notification_schema_ready"):
     ensure_notification_schema(conn)
     st.session_state["notification_schema_ready"] = True
@@ -62,6 +66,7 @@ menu = {
     "Inventory Forecasting": "Forecasting",
     "Financial Valuation": "Valuation",
     "Month-End Closing": "Period Closing",
+    "Evidence Centre": "Evidence Centre",
     "Truck Ledger": "Ledger",
     "Integration Inbox": "Bulk Upload",
     "Approvals": "Refill Approvals",
@@ -133,6 +138,8 @@ elif page == "Valuation":
     render_valuation(conn)
 elif page == "Period Closing":
     render_period_close(conn)
+elif page == "Evidence Centre":
+    render_document_centre(conn)
 elif page == "Reports":
     render_master_reports(conn)
 elif page == "Ledger":

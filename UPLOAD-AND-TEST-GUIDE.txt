@@ -1,0 +1,63 @@
+DOCUMENT & EVIDENCE CENTRE V1
+
+Upload these 3 complete replacement files to the root of the GitHub foundation-v2 branch:
+
+1. app.py
+2. document_centre.py (new file)
+3. rbac.py
+
+GITHUB
+1. Open the fuel-inventory-system repository.
+2. Confirm the branch selector says foundation-v2.
+3. Select Add file, then Upload files.
+4. Drag all 3 files into GitHub together.
+5. Select Commit directly to foundation-v2.
+6. Click Commit changes.
+
+STREAMLIT
+1. Wait for automatic redeployment.
+2. Open the app from Streamlit Community Cloud.
+3. If the previous menu remains after a few minutes, use Manage app and Reboot once.
+4. Do not reset or delete the PostgreSQL database. New tables are created automatically.
+
+TEST 1 - REGISTER EVIDENCE
+1. Sign in as Administrator or Inventory Manager.
+2. Open Evidence Centre.
+3. Open Upload evidence.
+4. Enter a title such as Test delivery note.
+5. Choose Delivery Note.
+6. Select General / Unlinked for the first test.
+7. Choose a small PDF, image, Excel, Word, CSV or text file.
+8. Click Register evidence.
+9. Confirm a DOC number appears.
+
+TEST 2 - LINK TO A RECORD
+1. Upload another document.
+2. Select Truck Transaction (TX).
+3. Enter only the numeric ID: enter 99 for TX-99.
+4. The system must reject an ID that does not exist.
+5. Register the valid document and find it in Document register.
+
+TEST 3 - DOWNLOAD AND VERSION
+1. Open Open document.
+2. Select the document.
+3. Download version 1.
+4. Add a replacement file and enter a clear version reason.
+5. Confirm version 2 appears while version 1 remains downloadable.
+
+TEST 4 - ARCHIVE
+1. Open the selected document.
+2. Enter an archive reason.
+3. Click Archive without deleting.
+4. Confirm the document remains visible with ARCHIVED status.
+
+TEST 5 - AUDIT
+1. Open Access history and confirm download/version/archive actions appear.
+2. Open Audit Centre and search for DOCUMENT.
+3. Confirm document uploads, downloads, versions and archiving are recorded.
+
+SECURITY RULES
+- Maximum file size: 8 MB each.
+- Allowed: PDF, PNG, JPG/JPEG, XLSX/XLS, CSV, DOCX and TXT.
+- Restricted evidence is visible only to Administrator, Inventory Manager, Approver and Auditor.
+- Evidence is archived, never permanently deleted through the app.
