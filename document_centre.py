@@ -34,7 +34,7 @@ LINK_TYPES = {
 
 ALLOWED_EXTENSIONS = {"pdf", "png", "jpg", "jpeg", "xlsx", "xls", "csv", "docx", "txt"}
 MAX_FILE_SIZE = 8 * 1024 * 1024
-DOCUMENT_CENTRE_VERSION = "1.1.0"
+DOCUMENT_CENTRE_VERSION = "1.1.1"
 MANAGE_ROLES = {"ADMIN", "INVENTORY_MANAGER", "STOREKEEPER", "PROCUREMENT_USER", "OPERATOR"}
 RESTRICTED_ROLES = {"ADMIN", "INVENTORY_MANAGER", "APPROVER", "AUDITOR"}
 
@@ -180,8 +180,25 @@ def _render_register(conn, documents):
     if role not in RESTRICTED_ROLES:
         allowed_rows=view["confidentiality"].astype(str).ne("RESTRICTED")
         view=view.loc[allowed_rows].copy()
-    st.dataframe(view.drop(columns=["sha256","mime_type"],errors="ignore"),use_container_width=True,hide_index=True,height=440,
-        column_config={"file_size":st.column_config.NumberColumn("File size",format="%d bytes"),"current_version":st.column_config.NumberColumn("Version",format="v%d")})
+    register_columns=["status","document_number","title","category","document_date","external_reference",
+        "entity_type","entity_id","supplier","confidentiality","current_version","file_name",
+        "file_size","created_by","created_at"]
+    display_view=view[[column for column in register_columns if column in view.columns]].copy()
+    display_view=display_view.rename(columns={
+        "status":"Status","document_number":"Document No.","title":"Title","category":"Category",
+        "document_date":"Document Date","external_reference":"External Reference",
+        "entity_type":"Linked Record Type","entity_id":"Linked Record ID","supplier":"Supplier",
+        "confidentiality":"Confidentiality","current_version":"Version","file_name":"Current File",
+        "file_size":"File Size","created_by":"Created By","created_at":"Created At",
+    })
+    st.dataframe(display_view,use_container_width=True,hide_index=True,height=440,
+        column_config={
+            "Status":st.column_config.TextColumn("Status",width="small"),
+            "Document No.":st.column_config.TextColumn("Document No.",width="small"),
+            "Title":st.column_config.TextColumn("Title",width="large"),
+            "Version":st.column_config.NumberColumn("Version",format="v%d"),
+            "File Size":st.column_config.NumberColumn("File Size",format="%d bytes"),
+        })
 
 
 def render_document_centre(conn):
