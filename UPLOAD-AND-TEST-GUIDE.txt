@@ -1,53 +1,24 @@
-SUPPLIER MASTER & COMPLIANCE V1
+SUPPLIER PERFORMANCE & SCORECARDS V2
 
-Upload these 7 complete replacement files to the root of the GitHub foundation-v2 branch:
-
+Upload these 3 complete files to the root of foundation-v2:
 1. app.py
-2. supplier_master.py (new file)
+2. supplier_scorecards.py (new)
 3. rbac.py
-4. procurement.py
-5. storage_operations.py
-6. transactions.py
-7. driver_app.py
 
-GITHUB
-1. Open the fuel-inventory-system repository.
-2. Confirm the branch selector says foundation-v2.
-3. Select Add file, then Upload files.
-4. Drag all 7 files into GitHub together.
-5. Commit directly to foundation-v2.
+Commit directly to foundation-v2 and wait for Streamlit deployment. Do not reset the database.
 
-STREAMLIT
-1. Wait for automatic deployment.
-2. Open the app from Streamlit Community Cloud.
-3. If the old menu remains, use Manage app and Reboot once.
-4. Do not delete or reset PostgreSQL. Existing suppliers are upgraded automatically.
+TEST
+1. Open Supplier Scorecards.
+2. Select a date range containing supplier receipts and booking releases.
+3. Check Ranking, Supplier Detail and Management Report.
+4. Download the Excel workbook.
+5. In Scoring Policy, confirm weights total 100%.
+6. Change a weight only if you understand the effect, save, and confirm scores refresh.
 
-FIRST TEST
-1. Sign in as Administrator or Inventory Manager.
-2. Open Supplier Master.
-3. Confirm existing suppliers have codes such as SUP-0001.
-4. Open Profile & status and complete one existing supplier profile.
-5. Save it and confirm the profile remains after refreshing.
-6. Open Contacts & products, add a contact and choose approved products.
-7. Open Performance & exposure and confirm existing bookings, receipts and claims appear.
-
-BLOCKING TEST
-1. Create a temporary supplier or select a supplier that is safe to test.
-2. Change its status to BLOCKED.
-3. Open Supplier Procurement and confirm it is not offered for a new booking.
-4. Open Storage Operations and confirm it is not offered for a new supplier receipt.
-5. Return to Supplier Master and change it back to ACTIVE if required.
-
-COMPLIANCE
-- EXPIRED: trade licence date is earlier than today.
-- EXPIRING: trade licence expires within 30 days.
-- VALID: expiry is more than 30 days away.
-- BLOCKED/INACTIVE suppliers remain in historical reports and audit records.
-
-EVIDENCE
-To attach a supplier licence, contract, tax certificate or bank letter:
-1. Open Evidence Centre.
-2. Upload the document.
-3. Choose Supplier as the linked record type.
-4. Enter the numeric Supplier ID shown in Supplier Master.
+MEASURES
+- On-time: first receipt on/before the release planned-delivery date.
+- Fill rate: accepted release quantity divided by released quantity, capped at 100%.
+- Receipt accuracy: 100% less the absolute dispatched-versus-accepted variance.
+- Claim-free: 100% less claimed liters as a share of received liters.
+- Overall: weighted average of available measures only.
+- NO DATA means the supplier had no measurable activity in the selected period.
