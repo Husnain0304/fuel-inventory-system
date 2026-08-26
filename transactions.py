@@ -358,7 +358,7 @@ def render_transactions(conn, cursor, truck_dict, truck_list):
         st.warning("Add a truck first.")
         return
 
-    suppliers_df = pd.read_sql_query("SELECT id, name FROM suppliers ORDER BY name", conn)
+    suppliers_df = pd.read_sql_query("SELECT id, name FROM suppliers WHERE COALESCE(status,'ACTIVE')='ACTIVE' ORDER BY name", conn)
     supplier_dict = {row['name']: row['id'] for _, row in suppliers_df.iterrows()}
     supplier_list = list(supplier_dict.keys())
 

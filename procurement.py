@@ -161,7 +161,7 @@ def render_procurement(conn):
     ensure_procurement_schema(conn)
     page_header("Supplier Bookings & Procurement", "Control advance bookings, releases, receipt consumption and supplier claims.")
     user=st.session_state.get("user","System")
-    suppliers=pd.read_sql_query("SELECT id,name FROM suppliers ORDER BY name",conn)
+    suppliers=pd.read_sql_query("SELECT id,name FROM suppliers WHERE COALESCE(status,'ACTIVE')='ACTIVE' ORDER BY name",conn)
     products=pd.read_sql_query("SELECT id,name FROM products WHERE active=TRUE ORDER BY name",conn)
     supplier_map=dict(zip(suppliers["name"],suppliers["id"])); product_map=dict(zip(products["name"],products["id"]))
     tab_overview,tab_booking,tab_release,tab_claims,tab_control,tab_report=st.tabs(["Overview","New booking","Create release","Supplier claims","Cancellation control","Reports"])

@@ -29,7 +29,7 @@ def get_trucks(conn):
     return {row['truck']: row['id'] for _, row in df.iterrows()}
 
 def get_suppliers(conn):
-    df = pd.read_sql_query("SELECT id, name FROM suppliers ORDER BY name", conn)
+    df = pd.read_sql_query("SELECT id, name FROM suppliers WHERE COALESCE(status,'ACTIVE')='ACTIVE' ORDER BY name", conn)
     return {row['name']: row['id'] for _, row in df.iterrows()}
 
 def save_uplift(conn, truck_id, liters, supplier_id, driver_name):

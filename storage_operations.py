@@ -463,7 +463,7 @@ def render_storage_operations(conn):
     tab_receipt,tab_transfer,tab_loading,tab_return,tab_history=st.tabs(["Supplier receipt","Tank transfer","Load truck","Truck return","Movement history"])
     tank_map=dict(zip(tanks["label"],tanks["id"])); truck_map=dict(zip(trucks["label"],trucks["id"])) if not trucks.empty else {}
     with tab_receipt:
-        suppliers=pd.read_sql_query("SELECT id,name FROM suppliers ORDER BY name",conn); supplier_map=dict(zip(suppliers["name"],suppliers["id"]))
+        suppliers=pd.read_sql_query("SELECT id,name FROM suppliers WHERE COALESCE(status,'ACTIVE')='ACTIVE' ORDER BY name",conn); supplier_map=dict(zip(suppliers["name"],suppliers["id"]))
         selected=st.selectbox("Receiving tank",list(tank_map),key="receipt_tank"); tank=tanks[tanks["id"]==tank_map[selected]].iloc[0]; st.info(f"Current {tank['balance']:,.2f} L · Available {max(tank['safe_capacity_liters']-tank['balance'],0):,.2f} L")
         a,b=st.columns(2); supplier=a.selectbox("Supplier",list(supplier_map),key="receipt_supplier"); purchase_type=b.selectbox("Purchase source",["Advance booking","Credit purchase","Cash purchase"],key="receipt_purchase_type")
         booking_id=None; release_id=None; booking_price=0.0
