@@ -28,6 +28,7 @@ from period_close import ensure_period_close_schema, render_period_close
 from document_centre import DOCUMENT_CENTRE_VERSION, ensure_document_schema, render_document_centre
 from supplier_master import ensure_supplier_master_schema, render_supplier_master
 from supplier_scorecards import ensure_scorecard_schema, render_supplier_scorecards
+from product_quality import ensure_quality_schema, render_product_quality
 
 
 st.set_page_config(page_title="Fuel Inventory Control", page_icon="⛽", layout="wide", initial_sidebar_state="expanded")
@@ -54,6 +55,9 @@ if not st.session_state.get("supplier_master_schema_ready"):
 if not st.session_state.get("scorecard_schema_ready"):
     ensure_scorecard_schema(conn)
     st.session_state["scorecard_schema_ready"] = True
+if not st.session_state.get("quality_schema_ready"):
+    ensure_quality_schema(conn)
+    st.session_state["quality_schema_ready"] = True
 if not st.session_state.get("notification_schema_ready"):
     ensure_notification_schema(conn)
     st.session_state["notification_schema_ready"] = True
@@ -73,6 +77,7 @@ menu = {
     "Supplier Procurement": "Procurement",
     "Supplier Master": "Supplier Master",
     "Supplier Scorecards": "Supplier Scorecards",
+    "Product & Quality": "Product Quality",
     "Inventory Forecasting": "Forecasting",
     "Financial Valuation": "Valuation",
     "Month-End Closing": "Period Closing",
@@ -146,6 +151,8 @@ elif page == "Supplier Master":
     render_supplier_master(conn)
 elif page == "Supplier Scorecards":
     render_supplier_scorecards(conn)
+elif page == "Product Quality":
+    render_product_quality(conn)
 elif page == "Forecasting":
     render_forecasting(conn)
 elif page == "Valuation":

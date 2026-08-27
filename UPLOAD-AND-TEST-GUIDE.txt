@@ -1,24 +1,41 @@
-SUPPLIER PERFORMANCE & SCORECARDS V2
+PRODUCT, BATCH & FUEL QUALITY CONTROL V1
 
-Upload these 3 complete files to the root of foundation-v2:
+BRANCH
+Use the GitHub branch: foundation-v2
+
+FILES TO REPLACE
+Upload all four files from this ZIP to the main/root folder of the foundation-v2 branch:
 1. app.py
-2. supplier_scorecards.py (new)
+2. product_quality.py (new file)
 3. rbac.py
+4. document_centre.py
 
-Commit directly to foundation-v2 and wait for Streamlit deployment. Do not reset the database.
+GITHUB STEPS
+1. Open the fuel-inventory-system repository.
+2. Confirm the branch selector says foundation-v2.
+3. Open app.py, click the pencil, replace the entire file, then commit.
+4. Repeat for rbac.py and document_centre.py.
+5. Use Add file > Create new file, name it product_quality.py, paste the entire file, then commit.
+   You may instead upload the four files together with Add file > Upload files.
 
-TEST
-1. Open Supplier Scorecards.
-2. Select a date range containing supplier receipts and booking releases.
-3. Check Ranking, Supplier Detail and Management Report.
-4. Download the Excel workbook.
-5. In Scoring Policy, confirm weights total 100%.
-6. Change a weight only if you understand the effect, save, and confirm scores refresh.
+STREAMLIT STEPS
+1. Open the foundation-v2 app in Streamlit Community Cloud.
+2. Wait for the automatic redeploy. Do not reset or delete the database.
+3. If the old menu remains, use Manage app > Reboot app once and wait 1-2 minutes.
+4. Sign in and open Product & Quality from the left menu.
 
-MEASURES
-- On-time: first receipt on/before the release planned-delivery date.
-- Fill rate: accepted release quantity divided by released quantity, capped at 100%.
-- Receipt accuracy: 100% less the absolute dispatched-versus-accepted variance.
-- Claim-free: 100% less claimed liters as a share of received liters.
-- Overall: weighted average of available measures only.
-- NO DATA means the supplier had no measurable activity in the selected period.
+SAFE TEST
+1. Open Specifications and create one specification for your fuel product.
+2. Open Create batch and register a test supplier batch. It starts in QUARANTINE.
+3. Open Link receipts and select an existing supplier receipt for the same supplier and product.
+4. Confirm the success message says quantity was not changed. Recheck Storage Operations balance.
+5. Open Quality inspection and record a PASS result inside the configured limits.
+6. Open Release decision, select RELEASED, enter a reason and authorization reference.
+7. Open Traceability report and download the Excel workbook.
+8. In Evidence Centre, confirm Fuel Batch (FB) and Quality Inspection (QI) are available as link types.
+
+IMPORTANT CONTROLS
+- Linking a receipt to a batch never changes fuel quantity.
+- A batch cannot be released unless its latest inspection is PASS.
+- Every creation, link, inspection and decision is written to Audit Centre.
+- Existing receipts remain valid even when they are not linked to a batch.

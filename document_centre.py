@@ -27,6 +27,8 @@ LINK_TYPES = {
     "Reconciliation (RC)": ("RECONCILIATION", "stock_reconciliations"),
     "Inventory Period (PC)": ("INVENTORY_PERIOD", "inventory_periods"),
     "Supplier": ("SUPPLIER", "suppliers"),
+    "Fuel Batch (FB)": ("FUEL_BATCH", "fuel_batches"),
+    "Quality Inspection (QI)": ("QUALITY_INSPECTION", "quality_inspections"),
     "Depot": ("DEPOT", "depots"),
     "Storage Tank": ("STORAGE_TANK", "storage_tanks"),
     "Truck": ("TRUCK", "trucks"),
