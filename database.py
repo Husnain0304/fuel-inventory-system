@@ -1,6 +1,7 @@
 import psycopg2
 import streamlit as st
 from threading import RLock
+from time import sleep
 from security import hash_password
 
 
@@ -47,15 +48,24 @@ class ConnectionManager:
                 self.connection = None
 
     def _connect(self):
-        return psycopg2.connect(
-            self.url,
-            connect_timeout=10,
-            application_name="fuel_inventory_control",
-            keepalives=1,
-            keepalives_idle=30,
-            keepalives_interval=10,
-            keepalives_count=5,
-        )
+        last_error = None
+        for attempt in range(3):
+            try:
+                return psycopg2.connect(
+                    self.url,
+                    connect_timeout=10,
+                    application_name="fuel_inventory_control",
+                    keepalives=1,
+                    keepalives_idle=30,
+                    keepalives_interval=10,
+                    keepalives_count=5,
+                    options="-c statement_timeout=30000 -c idle_in_transaction_session_timeout=30000",
+                )
+            except psycopg2.OperationalError as error:
+                last_error = error
+                if attempt < 2:
+                    sleep(1.5 * (attempt + 1))
+        raise last_error
 
 
 def get_connection():
@@ -280,6 +290,7 @@ def init_db(_conn) -> bool:
             "ALTER TABLE trucks ADD COLUMN IF NOT EXISTS operational_status TEXT DEFAULT 'ACTIVE'",
             "ALTER TABLE trucks ADD COLUMN IF NOT EXISTS notes TEXT",
             "ALTER TABLE trucks ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP",
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS active BOOLEAN NOT NULL DEFAULT TRUE",
         )
         for statement in migrations:
             cursor.execute(statement)

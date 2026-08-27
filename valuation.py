@@ -56,7 +56,7 @@ def calculate_valuation(conn,as_of_date):
     tank_meta={int(r.id):r for r in tanks.itertuples()}; truck_meta={int(r.id):r for r in trucks.itertuples()}
     end_at=datetime.combine(as_of_date,time.max)
     tank_tx=pd.read_sql_query("""SELECT id,tank_id,movement_at,liters,type,movement_category,product_id,
-        partner_tank_transaction_id,truck_transaction_id,unit_price,supplier_id,reference
+        partner_tank_transaction_id,truck_transaction_id,COALESCE(landed_unit_cost,unit_price) AS unit_price,supplier_id,reference
         FROM tank_transactions WHERE movement_at<=%s AND COALESCE(record_status,'POSTED')='POSTED'""",conn,params=[end_at])
     truck_tx=pd.read_sql_query("""SELECT id,truck_id,date,liters,type,movement_category,product_id,
         transfer_partner_id,tank_transaction_id,supplier_id,ticket_number

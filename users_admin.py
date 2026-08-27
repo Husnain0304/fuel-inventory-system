@@ -7,7 +7,7 @@ from ui import page_header
 
 def render_user_management(conn,cursor):
  ensure_rbac_schema(conn); page_header("User Access & Permissions","Create accounts, assign professional roles and review their workspace access.")
- users=pd.read_sql_query("SELECT id,username,role FROM users ORDER BY username",conn)
+ users=pd.read_sql_query("SELECT id,username,role,COALESCE(active,TRUE) AS active FROM users ORDER BY username",conn)
  tab_users,tab_matrix=st.tabs(["User accounts","Permission matrix"])
  with tab_users:
   with st.expander("Create new user",expanded=users.empty):
@@ -22,8 +22,8 @@ def render_user_management(conn,cursor):
      except Exception as exc: conn.rollback(); st.error("Username already exists or the account could not be created.")
   if users.empty: st.info("No users found.")
   else:
-   st.dataframe(users.rename(columns={"username":"Username","role":"Role"}),use_container_width=True,hide_index=True)
-   options={f"{r.username} · {ROLE_LABELS.get(r.role,r.role)}":r for r in users.itertuples()}; selected=st.selectbox("Manage account",list(options)); account=options[selected]
+   display=users.copy(); display["status"]=display.active.map({True:"ACTIVE",False:"INACTIVE"}); st.dataframe(display.rename(columns={"username":"Username","role":"Role","status":"Status"}).drop(columns=["active"]),use_container_width=True,hide_index=True)
+   options={f"{r.username} · {ROLE_LABELS.get(r.role,r.role)} · {'Active' if r.active else 'Inactive'}":r for r in users.itertuples()}; selected=st.selectbox("Manage account",list(options)); account=options[selected]
    with st.form("edit_user_v2"):
     a,b=st.columns(2); new_username=a.text_input("Username",value=account.username).strip(); new_role=b.selectbox("Role",ROLES,index=ROLES.index(account.role) if account.role in ROLES else 0,format_func=lambda x:ROLE_LABELS[x]); new_password=st.text_input("New password (leave blank to keep current)",type="password"); save=st.form_submit_button("Save account changes",type="primary")
    if save:
@@ -38,9 +38,11 @@ def render_user_management(conn,cursor):
       conn.commit(); record_event(conn,"UPDATE_USER","Security","User",account.id,f"Updated {new_username}; role {new_role}"); st.success("Account updated."); st.rerun()
      except Exception: conn.rollback(); st.error("Account could not be updated.")
    if account.username!=st.session_state.get("user"):
-    confirm=st.checkbox(f"Confirm deletion of {account.username}")
-    if st.button("Delete selected account",disabled=not confirm):
-     cursor.execute("DELETE FROM users WHERE id=%s",(account.id,)); conn.commit(); record_event(conn,"DELETE_USER","Security","User",account.id,f"Deleted {account.username}"); st.success("Account deleted."); st.rerun()
+    action="Deactivate" if account.active else "Reactivate"; confirm=st.checkbox(f"Confirm {action.lower()} for {account.username}")
+    if st.button(f"{action} selected account",disabled=not confirm):
+     new_active=not bool(account.active); cursor.execute("UPDATE users SET active=%s WHERE id=%s",(new_active,account.id))
+     if not new_active: cursor.execute("UPDATE login_sessions SET revoked=TRUE WHERE user_id=%s",(account.id,))
+     conn.commit(); record_event(conn,f"{action.upper()}_USER","Security","User",account.id,f"{action}d {account.username}",severity="WARNING" if not new_active else "INFO"); st.success(f"Account {action.lower()}d."); st.rerun()
  with tab_matrix:
   rows=[]
   for role in ROLES:

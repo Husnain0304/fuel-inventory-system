@@ -72,14 +72,26 @@ def run_close_checks(conn, period_id, user, save=True):
     pending_approvals=_safe_count(conn,"""SELECT COUNT(*) FROM approval_requests WHERE status='PENDING'
         AND request_kind NOT IN ('PERIOD_CLOSE','PERIOD_REOPEN') AND requested_at::date<=%s""",(end_date,))
     pending_counts=_safe_count(conn,"SELECT COUNT(*) FROM stock_reconciliations WHERE status='PENDING' AND reading_at::date<=%s",(end_date,))
+    pending_tank_counts=_safe_count(conn,"SELECT COUNT(*) FROM tank_cycle_counts WHERE status='PENDING' AND counted_at::date<=%s",(end_date,))
     pending_changes=_safe_count(conn,"SELECT COUNT(*) FROM transaction_change_requests WHERE status='PENDING' AND requested_at::date<=%s",(end_date,))
+    open_transit=_safe_count(conn,"SELECT COUNT(*) FROM inventory_transfers WHERE status='IN_TRANSIT' AND dispatched_at::date<=%s",(end_date,))
+    costing_pending=_safe_count(conn,"SELECT COUNT(*) FROM supplier_receipt_invoices WHERE status IN ('MATCHED','EXCEPTION') AND invoice_date<=%s",(end_date,))
+    expired_released=_safe_count(conn,"SELECT COUNT(*) FROM fuel_batches WHERE status='RELEASED' AND expiry_date<=%s",(end_date,))
+    expired_calibration=_safe_count(conn,"SELECT COUNT(*) FROM (SELECT DISTINCT ON (tank_id) tank_id,next_due_date FROM tank_calibrations WHERE calibration_date<=%s ORDER BY tank_id,calibration_date DESC,id DESC) q WHERE next_due_date<=%s",(end_date,end_date))
+    open_incidents=_safe_count(conn,"SELECT COUNT(*) FROM inventory_incidents WHERE status='OPEN' AND occurred_at::date<=%s",(end_date,))
     negative=int((position["Quantity (L)"] < -0.005).sum()) if not position.empty else 0
     fallback=int(ledger["Cost Source"].isin(["System default cost"]).sum()) if not ledger.empty else 0
     open_claims=int((~claims["status"].isin(["CLOSED","REJECTED"])).sum()) if not claims.empty else 0
     rows=[
         ("PENDING_APPROVALS","Pending approvals",pending_approvals,"BLOCKER" if pending_approvals else "PASS","Complete or reject requests dated on or before period end."),
         ("PENDING_COUNTS","Pending physical counts",pending_counts,"BLOCKER" if pending_counts else "PASS","Complete inventory reconciliations before closing."),
+        ("PENDING_TANK_COUNTS","Pending tank cycle counts",pending_tank_counts,"BLOCKER" if pending_tank_counts else "PASS","Review every tank count dated on or before period end."),
         ("PENDING_CHANGES","Pending transaction changes",pending_changes,"BLOCKER" if pending_changes else "PASS","Complete correction and reversal requests before closing."),
+        ("OPEN_TRANSIT","Stock still in transit",open_transit,"BLOCKER" if open_transit else "PASS","Receive or investigate all transfers dispatched on or before period end."),
+        ("PENDING_COSTING","Unapproved receipt costing",costing_pending,"BLOCKER" if costing_pending else "PASS","Approve or reject invoice matches and landed costs before closing."),
+        ("EXPIRED_RELEASED_BATCH","Expired batches still released",expired_released,"BLOCKER" if expired_released else "PASS","Block or close expired fuel batches."),
+        ("EXPIRED_CALIBRATION","Expired tank calibration",expired_calibration,"BLOCKER" if expired_calibration else "PASS","Renew expired measurement certificates."),
+        ("OPEN_INCIDENTS","Open inventory incidents",open_incidents,"WARNING" if open_incidents else "PASS","Review unresolved loss, gain, spill, return or contamination incidents."),
         ("NEGATIVE_STOCK","Negative inventory positions",negative,"BLOCKER" if negative else "PASS","Investigate every negative tank or truck position."),
         ("FALLBACK_COST","Movements using system default cost",fallback,"WARNING" if fallback else "PASS","Review missing receipt prices or approve a product cost policy."),
         ("OPEN_CLAIMS","Open supplier claims",open_claims,"WARNING" if open_claims else "PASS","Open claims do not block close but remain a financial exposure."),

@@ -12,7 +12,6 @@ from procurement import render_procurement
 from forecasting import render_forecasting
 from master_reports import render_master_reports
 from rbac import allowed_pages, ensure_rbac_schema
-from reports import render_reports
 from settings import render_settings
 from storage import render_storage
 from storage_operations import render_storage_operations
@@ -31,44 +30,21 @@ from supplier_scorecards import ensure_scorecard_schema, render_supplier_scoreca
 from product_quality import ensure_quality_schema, render_product_quality
 from batch_aging import ensure_batch_aging_schema, render_batch_aging
 from stock_reservations import ensure_reservation_schema, render_stock_reservations
+from inventory_health import render_inventory_health
+from storage_control import ensure_storage_control_schema, render_storage_control
+from stock_transit import ensure_transit_schema, render_stock_transit
+from receipt_costing import ensure_receipt_cost_schema, render_receipt_costing
+from schema_bootstrap import initialize_application_schema
 
 
 st.set_page_config(page_title="Fuel Inventory Control", page_icon="⛽", layout="wide", initial_sidebar_state="expanded")
 conn = get_connection()
 init_db(conn)
-ensure_rbac_schema(conn)
-ensure_approval_schema(conn)
+initialize_application_schema(conn)
 company = get_company_profile(conn)
 st.session_state["company_profile"] = company
 apply_theme(company)
 require_login(conn)
-if not st.session_state.get("valuation_schema_ready"):
-    ensure_valuation_schema(conn)
-    st.session_state["valuation_schema_ready"] = True
-if not st.session_state.get("period_close_schema_ready"):
-    ensure_period_close_schema(conn)
-    st.session_state["period_close_schema_ready"] = True
-if not st.session_state.get("document_schema_ready"):
-    ensure_document_schema(conn)
-    st.session_state["document_schema_ready"] = True
-if not st.session_state.get("supplier_master_schema_ready"):
-    ensure_supplier_master_schema(conn)
-    st.session_state["supplier_master_schema_ready"] = True
-if not st.session_state.get("scorecard_schema_ready"):
-    ensure_scorecard_schema(conn)
-    st.session_state["scorecard_schema_ready"] = True
-if not st.session_state.get("quality_schema_ready"):
-    ensure_quality_schema(conn)
-    st.session_state["quality_schema_ready"] = True
-if not st.session_state.get("batch_aging_schema_ready"):
-    ensure_batch_aging_schema(conn)
-    st.session_state["batch_aging_schema_ready"] = True
-if not st.session_state.get("reservation_schema_ready"):
-    ensure_reservation_schema(conn)
-    st.session_state["reservation_schema_ready"] = True
-if not st.session_state.get("notification_schema_ready"):
-    ensure_notification_schema(conn)
-    st.session_state["notification_schema_ready"] = True
 if not st.session_state.get("approval_escalation_checked"):
     process_approval_escalations(conn)
     st.session_state["approval_escalation_checked"] = True
@@ -79,18 +55,22 @@ menu = {
     "Fuel Operations": "Transactions",
     "Fleet Inventory": "Manage Trucks",
     "Inventory Control": "Reconciliation",
+    "Measurement & Loss Control": "Storage Control",
     "Transaction Control": "Transaction Control",
     "Depots & Storage": "Storage",
     "Storage Operations": "Storage Operations",
+    "Stock in Transit": "Stock Transit",
     "Supplier Procurement": "Procurement",
     "Supplier Master": "Supplier Master",
     "Supplier Scorecards": "Supplier Scorecards",
+    "Receipt Costing": "Receipt Costing",
     "Product & Quality": "Product Quality",
     "Batch Aging & FEFO": "Batch Aging",
-    "Reservations & ATP": "Stock Reservations",
+    "Stock Commitments": "Stock Reservations",
     "Inventory Forecasting": "Forecasting",
     "Financial Valuation": "Valuation",
     "Month-End Closing": "Period Closing",
+    "Inventory Health": "Inventory Health",
     "Evidence Centre": "Evidence Centre",
     "Truck Ledger": "Ledger",
     "Integration Inbox": "Bulk Upload",
@@ -149,18 +129,24 @@ elif page == "Manage Trucks":
     render_trucks(conn, cursor)
 elif page == "Reconciliation":
     render_reconciliation(conn)
+elif page == "Storage Control":
+    render_storage_control(conn)
 elif page == "Transaction Control":
     render_transaction_control(conn)
 elif page == "Storage":
     render_storage(conn)
 elif page == "Storage Operations":
     render_storage_operations(conn)
+elif page == "Stock Transit":
+    render_stock_transit(conn)
 elif page == "Procurement":
     render_procurement(conn)
 elif page == "Supplier Master":
     render_supplier_master(conn)
 elif page == "Supplier Scorecards":
     render_supplier_scorecards(conn)
+elif page == "Receipt Costing":
+    render_receipt_costing(conn)
 elif page == "Product Quality":
     render_product_quality(conn)
 elif page == "Batch Aging":
@@ -173,6 +159,8 @@ elif page == "Valuation":
     render_valuation(conn)
 elif page == "Period Closing":
     render_period_close(conn)
+elif page == "Inventory Health":
+    render_inventory_health(conn)
 elif page == "Evidence Centre":
     render_document_centre(conn)
 elif page == "Reports":

@@ -62,6 +62,10 @@ def render_dashboard(conn, truck_dict, truck_list):
         ("Inventory forecasting", "Review demand, stock-out risk and reorder quantities.", "Inventory Forecasting", "launch_forecast", False),
         ("Reconcile physical stock", "Compare measured stock with the system and control adjustments.", "Inventory Control", "launch_reconcile", False),
         ("Transaction control", "Control corrections and reversals with approvals.", "Transaction Control", "launch_control", False),
+        ("Product & quality", "Control specifications, batches, inspection and release.", "Product & Quality", "launch_quality", False),
+        ("Stock in transit", "Plan, dispatch and receive depot-to-depot transfers.", "Stock in Transit", "launch_transit", False),
+        ("Measurement & losses", "Record tank counts, calibrations and inventory incidents.", "Measurement & Loss Control", "launch_measurement", False),
+        ("Inventory health", "Run integrity checks and investigate control exceptions.", "Inventory Health", "launch_health", False),
         ("Master reports", "Generate operational and management reports.", "Report Centre", "launch_reports", False),
         ("Audit centre", "Investigate who performed every important action.", "Audit Centre", "launch_audit", False),
     ]
@@ -85,7 +89,12 @@ def render_dashboard(conn, truck_dict, truck_list):
                COUNT(*) AS movements
         FROM transactions WHERE date=%s
     """, [str(today)]).iloc[0]
-    live_stock = float(balances["balance"].sum()) if not balances.empty else 0
+    truck_stock = float(balances["balance"].sum()) if not balances.empty else 0
+    tank_total=_safe_read(conn,"""SELECT COALESCE(SUM(balance),0) total FROM (SELECT tank_id,SUM(CASE WHEN type='IN' THEN liters ELSE -liters END) balance FROM tank_transactions WHERE COALESCE(record_status,'POSTED')='POSTED' GROUP BY tank_id) q""")
+    tank_stock=float(tank_total.iloc[0,0] or 0) if not tank_total.empty else 0
+    transit_total=_safe_read(conn,"SELECT COALESCE(SUM(dispatched_liters),0) total FROM inventory_transfers WHERE status='IN_TRANSIT'")
+    in_transit=float(transit_total.iloc[0,0] or 0) if not transit_total.empty else 0
+    live_stock=truck_stock+tank_stock+in_transit
     low_stock = balances[balances["balance"] <= minimum] if not balances.empty else balances
     pending = int(_read(conn, "SELECT COUNT(*) AS count FROM refill_requests WHERE status='PENDING'").iloc[0]["count"])
     tank_alerts=_safe_read(conn,"""SELECT CONCAT(d.code,' · ',t.code) AS asset,COALESCE(SUM(CASE WHEN x.type='IN' THEN x.liters ELSE -x.liters END),0) AS balance FROM storage_tanks t JOIN depots d ON d.id=t.depot_id LEFT JOIN tank_transactions x ON x.tank_id=t.id GROUP BY t.id,d.code HAVING COALESCE(SUM(CASE WHEN x.type='IN' THEN x.liters ELSE -x.liters END),0)<=t.minimum_stock_liters ORDER BY balance""")
@@ -94,15 +103,20 @@ def render_dashboard(conn, truck_dict, truck_list):
     claims=_safe_read(conn,"SELECT id FROM supplier_claims WHERE status NOT IN ('CLOSED','REJECTED')")
     reconciliations=_safe_read(conn,"SELECT id FROM stock_reconciliations WHERE status='PENDING'")
     unallocated=_safe_read(conn,"SELECT id FROM procurement_releases WHERE status IN ('OPEN','PARTIALLY_RECEIVED') AND destination_tank_id IS NULL")
-    total_attention=len(low_stock)+pending+len(tank_alerts)+len(overdue)+len(claims)+len(reconciliations)+len(unallocated)
+    quality_hold=_safe_read(conn,"SELECT id FROM fuel_batches WHERE status='QUARANTINE'")
+    expired_batches=_safe_read(conn,"SELECT id FROM fuel_batches WHERE status='RELEASED' AND expiry_date<CURRENT_DATE")
+    calibration_due=_safe_read(conn,"SELECT id FROM tank_calibrations WHERE next_due_date<=CURRENT_DATE+30")
+    open_incidents=_safe_read(conn,"SELECT id FROM inventory_incidents WHERE status='OPEN'")
+    transit_overdue=_safe_read(conn,"SELECT id FROM inventory_transfers WHERE status='IN_TRANSIT' AND dispatched_at<CURRENT_TIMESTAMP-INTERVAL '24 hours'")
+    total_attention=len(low_stock)+pending+len(tank_alerts)+len(overdue)+len(claims)+len(reconciliations)+len(unallocated)+len(quality_hold)+len(expired_batches)+len(calibration_due)+len(open_incidents)+len(transit_overdue)
 
     st.markdown('<div class="section-label">TODAY AT A GLANCE</div>', unsafe_allow_html=True)
     metrics = st.columns(5)
     metric_data = [
-        ("Live inventory", f"{live_stock:,.0f} L", f"Across {len(balances)} trucks"),
-        ("Received today", f"{today_summary['total_in']:,.0f} L", "Fuel IN"),
-        ("Delivered today", f"{today_summary['total_out']:,.0f} L", "Fuel OUT"),
-        ("Movements today", f"{int(today_summary['movements']):,}", "Posted records"),
+        ("Controlled inventory", f"{live_stock:,.0f} L", "Tanks, trucks and transit"),
+        ("Tank inventory", f"{tank_stock:,.0f} L", "Storage position"),
+        ("Truck inventory", f"{truck_stock:,.0f} L", f"Across {len(balances)} trucks"),
+        ("In transit", f"{in_transit:,.0f} L", "Dispatched, not yet received"),
         ("Needs attention", f"{total_attention}", "Stock, releases, claims and controls"),
     ]
     for column, values in zip(metrics, metric_data):
@@ -177,6 +191,11 @@ def render_dashboard(conn, truck_dict, truck_list):
             if len(reconciliations): st.warning(f"{len(reconciliations)} reconciliation(s) pending")
             if len(unallocated): st.info(f"{len(unallocated)} incoming release(s) need a destination tank")
             if len(upcoming): st.info(f"{len(upcoming)} release(s) expected within 7 days")
+            if len(expired_batches): st.error(f"{len(expired_batches)} expired batch(es) remain released")
+            if len(quality_hold): st.warning(f"{len(quality_hold)} batch(es) in quarantine")
+            if len(calibration_due): st.warning(f"{len(calibration_due)} tank calibration(s) due within 30 days")
+            if len(open_incidents): st.warning(f"{len(open_incidents)} inventory incident(s) open")
+            if len(transit_overdue): st.error(f"{len(transit_overdue)} transfer(s) in transit over 24 hours")
         a1, a2 = st.columns(2)
         if a1.button("Review stock", use_container_width=True):
             _go("Fleet Inventory")

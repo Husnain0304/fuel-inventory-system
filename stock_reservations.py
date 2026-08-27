@@ -49,7 +49,7 @@ def _report(atp,reservations,fulfilments,company):
 
 def render_stock_reservations(conn):
  user=st.session_state.get("user","System"); role=st.session_state.get("role","VIEWER"); atp=_atp(conn); reservations=_reservations(conn)
- page_header("Reservations & Available to Promise","Control customer demand without double-promising released usable inventory.")
+ page_header("Stock Commitments & Availability","Protect released inventory for approved internal loading requirements without changing physical stock.")
  a,b,c,d=st.columns(4); a.metric("Usable released",f"{atp.usable_released_liters.sum():,.0f} L"); b.metric("Actively reserved",f"{atp.active_reserved_liters.sum():,.0f} L"); c.metric("Available to promise",f"{atp.available_to_promise.sum():,.0f} L"); d.metric("Open requests",int(reservations.status.isin(['ACTIVE','PARTIALLY_FULFILLED']).sum()) if not reservations.empty else 0)
  overview,create,manage,fulfil,report=st.tabs(["Availability","Create reservation","Manage requests","Fulfil reservation","Demand report"])
  with overview: st.caption("ATP excludes quarantined, rejected, expired, already consumed and already reserved stock."); st.dataframe(atp,use_container_width=True,hide_index=True)
@@ -58,13 +58,13 @@ def render_stock_reservations(conn):
   else:
    products={r.product:int(r.product_id) for r in atp.itertuples()}
    with st.form("new_reservation"):
-    x,y=st.columns(2); customer=x.text_input("Customer / requesting department"); reference=y.text_input("Customer order / external reference")
+    x,y=st.columns(2); customer=x.text_input("Requesting department / source"); reference=y.text_input("Approved loading request reference")
     x,y=st.columns(2); product=x.selectbox("Product",list(products)); source=y.text_input("Source system",value="Manual")
     x,y,z=st.columns(3); liters=x.number_input("Requested litres",min_value=0.01); required=y.date_input("Required date"); priority=z.selectbox("Priority",["NORMAL","URGENT","CRITICAL"])
     allow_partial=st.checkbox("Allow partial reservation",value=True); notes=st.text_area("Notes"); submit=st.form_submit_button("Create reservation",type="primary")
    if submit:
     available=float(atp.loc[atp.product.eq(product),'available_to_promise'].iloc[0]); reserved=min(float(liters),available) if allow_partial else float(liters)
-    if len(customer.strip())<2: st.error("Enter the customer or requesting department.")
+    if len(customer.strip())<2: st.error("Enter the requesting department or source system.")
     elif not allow_partial and liters>available+0.005: st.error(f"Only {available:,.2f} L is available to promise.")
     elif reserved<=0: st.error("No released usable stock is available for this product.")
     else:

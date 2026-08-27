@@ -298,11 +298,11 @@ def render_bulk_upload(conn, cursor, truck_dict, truck_list):
                 # Fix for StreamlitAPIException: convert date column to pandas datetime64
                 display_df["date"] = pd.to_datetime(display_df["date"])
 
-                edited_tx = st.data_editor(
+                st.dataframe(
                     display_df,
                     key=f"file_tx_editor_{sel_file_id}",
-                    num_rows="dynamic",
                     use_container_width=True,
+                    hide_index=True,
                     column_config={
                         "id": st.column_config.NumberColumn("ID", disabled=True),
                         "date": st.column_config.DateColumn("Date", required=True),
@@ -312,42 +312,7 @@ def render_bulk_upload(conn, cursor, truck_dict, truck_list):
                     }
                 )
 
-                col_save, col_del_file = st.columns([2, 1])
-
-                if col_save.button("💾 Save Changes to File Transactions", type="primary"):
-                    try:
-                        current_ids = edited_tx["id"].dropna().tolist()
-                        deleted_ids = set(tx_df["id"]) - set(current_ids)
-
-                        for d_id in deleted_ids:
-                            cursor.execute("DELETE FROM transactions WHERE id = %s", (d_id,))
-
-                        for _, row in edited_tx.iterrows():
-                            if pd.notna(row["id"]):
-                                t_id = truck_dict.get(row["truck"])
-                                # Format date back to string for database update
-                                date_str = pd.to_datetime(row["date"]).strftime("%Y-%m-%d") if pd.notna(row["date"]) else str(row["date"])
-                                cursor.execute("""
-                                    UPDATE transactions 
-                                    SET date = %s, truck_id = %s, liters = %s, ticket_number = %s
-                                    WHERE id = %s
-                                """, (date_str, t_id, row["liters"], str(row["ticket_number"]), int(row["id"])))
-
-                        conn.commit()
-                        st.success("Transactions updated successfully!")
-                        st.rerun()
-                    except Exception as e:
-                        conn.rollback()
-                        st.error(f"Error saving updates: {e}")
-
-                with col_del_file:
-                    with st.expander("🗑️ Delete Entire File"):
-                        st.warning("This will permanently remove this file and all associated transactions!")
-                        if st.button(f"Confirm Delete '{selected_file}'", type="primary"):
-                            cursor.execute("DELETE FROM uploaded_files WHERE id = %s", (sel_file_id,))
-                            conn.commit()
-                            st.success(f"File '{selected_file}' and its transactions were deleted.")
-                            st.rerun()
+                st.caption("Imported records are permanent inventory evidence. Submit a correction or reversal through Transaction Control; records and source-file history cannot be deleted here.")
 
     # =============================================================
     # TAB 3: SEARCH TRANSACTIONS

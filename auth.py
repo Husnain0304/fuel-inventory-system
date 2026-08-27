@@ -51,7 +51,7 @@ def _restore_session(conn):
         """
         SELECT u.id, u.username, u.role
         FROM login_sessions s JOIN users u ON u.id=s.user_id
-        WHERE s.token_hash=%s AND s.revoked=FALSE AND s.expires_at > CURRENT_TIMESTAMP
+        WHERE s.token_hash=%s AND s.revoked=FALSE AND s.expires_at > CURRENT_TIMESTAMP AND COALESCE(u.active,TRUE)=TRUE
         """,
         (_token_hash(raw_token),),
     )
@@ -84,7 +84,7 @@ def login_system(conn):
 
         if submitted and _login_allowed():
             cursor = conn.cursor()
-            cursor.execute("SELECT id, username, password, role FROM users WHERE LOWER(username)=LOWER(%s)", (username,))
+            cursor.execute("SELECT id, username, password, role FROM users WHERE LOWER(username)=LOWER(%s) AND COALESCE(active,TRUE)=TRUE", (username,))
             result = cursor.fetchone()
             valid, needs_upgrade = verify_password(password, result[2]) if result else (False, False)
             if valid:
@@ -112,7 +112,7 @@ def require_login(conn):
         login_system(conn)
         st.stop()
     cursor = conn.cursor()
-    cursor.execute("SELECT username, role FROM users WHERE id=%s", (st.session_state["user_id"],))
+    cursor.execute("SELECT username, role FROM users WHERE id=%s AND COALESCE(active,TRUE)=TRUE", (st.session_state["user_id"],))
     current = cursor.fetchone()
     if not current:
         logout(conn)

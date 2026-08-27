@@ -169,39 +169,7 @@ def get_transfer_integrity_issues(conn):
 
 
 def delete_transaction_safely(conn, transaction_id, user):
-    """Delete a normal transaction, or both verified sides of a transfer, atomically."""
-    cursor = conn.cursor()
-    try:
-        cursor.execute(
-            "SELECT id, transfer_partner_id FROM transactions WHERE id=%s FOR UPDATE",
-            (transaction_id,),
-        )
-        row = cursor.fetchone()
-        if not row:
-            raise ValueError("This transaction no longer exists.")
-
-        partner_id = row[1]
-        ids_to_delete = [transaction_id]
-        if partner_id:
-            cursor.execute(
-                "SELECT id, transfer_partner_id FROM transactions WHERE id=%s FOR UPDATE",
-                (partner_id,),
-            )
-            partner = cursor.fetchone()
-            if not partner or partner[1] != transaction_id:
-                raise ValueError("This transfer pair is broken. Deletion was stopped to protect the inventory.")
-            ids_to_delete.append(partner_id)
-
-        cursor.execute("DELETE FROM transactions WHERE id = ANY(%s)", (ids_to_delete,))
-        cursor.execute(
-            'INSERT INTO audit_log ("user", action, timestamp) VALUES (%s, %s, CURRENT_TIMESTAMP)',
-            (user, f"DELETED transaction record(s): {', '.join(f'TX-{value}' for value in ids_to_delete)}"),
-        )
-        conn.commit()
-        return ids_to_delete
-    except Exception:
-        conn.rollback()
-        raise
+    raise ValueError("Permanent deletion is disabled. Submit a reversal through Transaction Control.")
 
 @st.dialog("✏️ Edit Transaction")
 def edit_transaction_dialog(conn, cursor, tx_item, supplier_dict):
@@ -259,89 +227,14 @@ def edit_transaction_dialog(conn, cursor, tx_item, supplier_dict):
 @st.dialog("⚠️ Confirm Bulk Delete")
 def confirm_bulk_delete_dialog(conn, cursor, truck_id, truck_name, start_date, end_date, supplier_id=None):
     st.error("Permanent transaction deletion is disabled. Use Transaction Control to request a traceable reversal.")
-    return
-    st.warning(f"Are you sure you want to delete transactions for **{truck_name}** between **{start_date}** and **{end_date}**?")
-    
-    if supplier_id:
-        cursor.execute("""
-            SELECT COUNT(*) FROM transactions 
-            WHERE truck_id = %s AND date >= %s AND date <= %s AND supplier_id = %s
-              AND transfer_partner_id IS NULL
-        """, (truck_id, str(start_date), str(end_date), supplier_id))
-    else:
-        cursor.execute("""
-            SELECT COUNT(*) FROM transactions 
-            WHERE truck_id = %s AND date >= %s AND date <= %s
-              AND transfer_partner_id IS NULL
-        """, (truck_id, str(start_date), str(end_date)))
-    
-    count = cursor.fetchone()[0]
-    st.write(f"📊 **Total records to be deleted:** `{count}`")
-
-    if count == 0:
-        st.info("No matching records found for this selection.")
-        return
-
-    if st.button("🔴 YES, DELETE THESE RECORDS", type="primary", use_container_width=True):
-        if supplier_id:
-            cursor.execute("""
-                DELETE FROM transactions 
-                WHERE truck_id = %s AND date >= %s AND date <= %s AND supplier_id = %s
-                  AND transfer_partner_id IS NULL
-            """, (truck_id, str(start_date), str(end_date), supplier_id))
-        else:
-            cursor.execute("""
-                DELETE FROM transactions 
-                WHERE truck_id = %s AND date >= %s AND date <= %s
-                  AND transfer_partner_id IS NULL
-            """, (truck_id, str(start_date), str(end_date)))
-        
-        conn.commit()
-        log_action(cursor, conn, f"BULK DELETED {count} transactions for Truck '{truck_name}' between {start_date} and {end_date}")
-        st.success(f"Successfully deleted {count} records! You can now re-upload your corrected file.")
-        st.rerun()
 
 @st.dialog("⚠️ CONFIRM CLEAR ALL IN (UPLIFT) DATA")
 def confirm_clear_in_dialog(conn, cursor):
     st.error("Permanent transaction deletion is disabled. Use Transaction Control to request a traceable reversal.")
-    return
-    cursor.execute("SELECT COUNT(*) FROM transactions WHERE type = 'IN' AND transfer_partner_id IS NULL")
-    count = cursor.fetchone()[0]
-    
-    st.error(f"🚨 **WARNING:** You are about to permanently delete ALL **{count}** UPLIFT (Fuel IN) records from the database!")
-    st.write("This action cannot be undone.")
-
-    if count == 0:
-        st.info("No UPLIFT (IN) records found to delete.")
-        return
-
-    if st.button("🔴 YES, WIPE ALL IN / UPLIFT RECORDS", type="primary", use_container_width=True):
-        cursor.execute("DELETE FROM transactions WHERE type = 'IN' AND transfer_partner_id IS NULL")
-        conn.commit()
-        log_action(cursor, conn, f"ADMIN WIPED ALL UPLIFT (IN) TRANSACTIONS ({count} records)")
-        st.success(f"Successfully deleted all {count} IN (Uplift) records!")
-        st.rerun()
 
 @st.dialog("⚠️ CONFIRM CLEAR ALL OUT (DELIVERY) DATA")
 def confirm_clear_out_dialog(conn, cursor):
     st.error("Permanent transaction deletion is disabled. Use Transaction Control to request a traceable reversal.")
-    return
-    cursor.execute("SELECT COUNT(*) FROM transactions WHERE type = 'OUT' AND transfer_partner_id IS NULL")
-    count = cursor.fetchone()[0]
-    
-    st.error(f"🚨 **WARNING:** You are about to permanently delete ALL **{count}** DELIVERY (Fuel OUT) records from the database!")
-    st.write("This action cannot be undone.")
-
-    if count == 0:
-        st.info("No DELIVERY (OUT) records found to delete.")
-        return
-
-    if st.button("🔴 YES, WIPE ALL OUT / DELIVERY RECORDS", type="primary", use_container_width=True):
-        cursor.execute("DELETE FROM transactions WHERE type = 'OUT' AND transfer_partner_id IS NULL")
-        conn.commit()
-        log_action(cursor, conn, f"ADMIN WIPED ALL DELIVERY (OUT) TRANSACTIONS ({count} records)")
-        st.success(f"Successfully deleted all {count} OUT (Delivery) records!")
-        st.rerun()
 
 
 def render_transactions(conn, cursor, truck_dict, truck_list):
@@ -562,21 +455,13 @@ def render_transactions(conn, cursor, truck_dict, truck_list):
                         st.error("This supplier is already registered.")
 
     # ==========================================
-    # TAB 4: VIEW, SUMMARY, EDIT & BULK DELETE
+    # TAB 4: VIEW, SUMMARY AND CONTROLLED HISTORY
     # ==========================================
     with tab4:
         st.subheader("🧐 Historical Audit & Filter Engine")
 
         if user_role == "ADMIN":
-            with st.expander("🔑 Admin Database Purge Controls", expanded=False):
-                st.warning("⚠️ **ADMIN ONLY ZONE:** Clearing transaction types will purge corresponding records across all trucks.")
-                col_clear_in, col_clear_out = st.columns(2)
-                
-                if col_clear_in.button("🔥 Clear ALL UPLIFT (IN) Data", use_container_width=True):
-                    confirm_clear_in_dialog(conn, cursor)
-                
-                if col_clear_out.button("🔥 Clear ALL DELIVERY (OUT) Data", use_container_width=True):
-                    confirm_clear_out_dialog(conn, cursor)
+            st.caption("Permanent deletion is disabled. Use Transaction Control for traceable corrections and reversals.")
 
         if user_role == "ADMIN":
             integrity_issues = get_transfer_integrity_issues(conn)
@@ -611,7 +496,7 @@ def render_transactions(conn, cursor, truck_dict, truck_list):
 
             view_mode = st.radio(
                 "Select View Mode", 
-                ["📊 Summarized Fleet Totals", "📜 Detailed Transaction Records", "🚨 Bulk Delete Operations"], 
+                ["📊 Summarized Fleet Totals", "📜 Detailed Transaction Records"], 
                 horizontal=True
             )
 
@@ -637,34 +522,6 @@ def render_transactions(conn, cursor, truck_dict, truck_list):
                     use_container_width=True,
                     hide_index=True
                 )
-
-            elif view_mode == "🚨 Bulk Delete Operations":
-                st.markdown("### 🗑️ Bulk Delete Uploaded Data")
-                st.warning("Use this panel to erase wrong batch uploads for a truck and date range before re-uploading your clean file.")
-
-                col_b1, col_b2 = st.columns(2)
-                target_truck = col_b1.selectbox("Select Target Truck", truck_list, key="bulk_del_truck")
-                target_truck_id = truck_dict[target_truck]
-
-                min_d = history_df['date_parsed'].min().date()
-                max_d = history_df['date_parsed'].max().date()
-                
-                date_range = col_b2.date_input("Select Date Range to Clear", value=(min_d, max_d), key="bulk_del_dates")
-
-                suppliers_for_bulk = ["All Suppliers"] + supplier_list
-                selected_bulk_supplier = col_b1.selectbox("Filter by Supplier (Optional)", suppliers_for_bulk, key="bulk_del_supplier")
-                target_supplier_id = supplier_dict.get(selected_bulk_supplier) if selected_bulk_supplier != "All Suppliers" else None
-
-                if st.button("💥 PROCEED TO BULK DELETE", type="primary"):
-                    if isinstance(date_range, tuple) and len(date_range) == 2:
-                        confirm_bulk_delete_dialog(
-                            conn, cursor, 
-                            target_truck_id, target_truck, 
-                            date_range[0], date_range[1], 
-                            target_supplier_id
-                        )
-                    else:
-                        st.error("Please select both a start date and end date.")
 
             else:
                 with st.container(border=True):
