@@ -30,6 +30,7 @@ from supplier_master import ensure_supplier_master_schema, render_supplier_maste
 from supplier_scorecards import ensure_scorecard_schema, render_supplier_scorecards
 from product_quality import ensure_quality_schema, render_product_quality
 from batch_aging import ensure_batch_aging_schema, render_batch_aging
+from stock_reservations import ensure_reservation_schema, render_stock_reservations
 
 
 st.set_page_config(page_title="Fuel Inventory Control", page_icon="⛽", layout="wide", initial_sidebar_state="expanded")
@@ -62,6 +63,9 @@ if not st.session_state.get("quality_schema_ready"):
 if not st.session_state.get("batch_aging_schema_ready"):
     ensure_batch_aging_schema(conn)
     st.session_state["batch_aging_schema_ready"] = True
+if not st.session_state.get("reservation_schema_ready"):
+    ensure_reservation_schema(conn)
+    st.session_state["reservation_schema_ready"] = True
 if not st.session_state.get("notification_schema_ready"):
     ensure_notification_schema(conn)
     st.session_state["notification_schema_ready"] = True
@@ -83,6 +87,7 @@ menu = {
     "Supplier Scorecards": "Supplier Scorecards",
     "Product & Quality": "Product Quality",
     "Batch Aging & FEFO": "Batch Aging",
+    "Reservations & ATP": "Stock Reservations",
     "Inventory Forecasting": "Forecasting",
     "Financial Valuation": "Valuation",
     "Month-End Closing": "Period Closing",
@@ -160,6 +165,8 @@ elif page == "Product Quality":
     render_product_quality(conn)
 elif page == "Batch Aging":
     render_batch_aging(conn)
+elif page == "Stock Reservations":
+    render_stock_reservations(conn)
 elif page == "Forecasting":
     render_forecasting(conn)
 elif page == "Valuation":

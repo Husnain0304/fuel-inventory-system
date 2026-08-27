@@ -1,24 +1,16 @@
-BATCH AGING, FEFO ALLOCATION & EXPIRY CONTROL V1
+STOCK RESERVATIONS & AVAILABLE-TO-PROMISE V1
 
-Upload these complete replacement files to the root of the foundation-v2 branch:
-1. app.py
-2. batch_aging.py (new)
-3. rbac.py
-
-After GitHub finishes committing, wait for Streamlit to redeploy. If the new menu does not appear, reboot once. Never reset the database.
+Upload complete app.py, stock_reservations.py and rbac.py to the root of foundation-v2. Wait for Streamlit redeployment; reboot once only if the menu remains old. Never reset the database.
 
 TEST
-1. Sign in as Admin and open Batch Aging & FEFO.
-2. FEFO stock position should show released batches first, ordered by earliest expiry.
-3. Confirm quarantined/rejected batches show BLOCKED and expired batches show EXPIRED.
-4. Open Settings & report. Save warning days as 60 and critical days as 30.
-5. Open Allocate issued fuel and select an unallocated storage OUT transaction.
-6. Choose the recommended earliest-expiry released batch and allocate it.
-7. Confirm the message says inventory quantity was not changed.
-8. Repeat with a later-expiring batch: the system must require an FEFO exception reason.
-9. Try a batch with insufficient balance: allocation must be blocked.
-10. Download the Batch Aging & FEFO report and verify all three sheets.
-11. Open Audit Centre and search ALLOCATE_BATCH_ISSUE or UPDATE_AGING_LIMITS.
-
-IMPORTANT
-This module assigns already-posted storage issues to batches for traceability. It does not post, add, subtract or duplicate physical inventory.
+1. Open Reservations & ATP as Admin.
+2. Availability must show usable released stock, active reservations and available-to-promise.
+3. Create a small reservation for an existing product. Confirm physical inventory does not change and ATP reduces.
+4. Try a request larger than ATP with partial reservation disabled: it must be blocked.
+5. Enable partial reservation: it must reserve only the available quantity.
+6. Cancel a test request with a reason: outstanding quantity must return to ATP.
+7. Post a small OUT transaction in Storage Operations.
+8. Return to Fulfil reservation and link that existing STX transaction.
+9. Confirm no new movement is created and status becomes PARTIALLY_FULFILLED or FULFILLED.
+10. Download the ATP & demand report and check all three worksheets.
+11. Search Audit Centre for CREATE_RESERVATION, CANCEL_RESERVATION and FULFIL_RESERVATION.
