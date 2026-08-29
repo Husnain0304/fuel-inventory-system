@@ -5,6 +5,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from ui import GREEN, RED, page_header, profile, stat_card
+from rbac import allowed_pages
 
 
 def _read(conn, query, params=None):
@@ -25,8 +26,8 @@ def _go(label):
 
 def _launcher(title, description, destination, key, primary=False):
     st.markdown(
-        f'<div class="launch-card"><div class="launch-title">{title}</div>'
-        f'<div class="launch-copy">{description}</div></div>', unsafe_allow_html=True
+        f'<div class="workspace-card"><div class="workspace-icon">◇</div><div class="workspace-title">{title}</div>'
+        f'<div class="workspace-copy">{description}</div></div>', unsafe_allow_html=True
     )
     if st.button("Open workspace", key=key, type="primary" if primary else "secondary", use_container_width=True):
         _go(destination)
@@ -35,43 +36,57 @@ def _launcher(title, description, destination, key, primary=False):
 def render_dashboard(conn, truck_dict, truck_list):
     company = profile()
     user = st.session_state.get("user", "User")
+    permitted = allowed_pages(st.session_state.get("role", "VIEWER"))
     today = date.today()
-    page_header("Command Centre", f"Welcome back, {user}. Everything requiring attention is organised here.")
+    page_header("Command Centre", "Live inventory position, controlled workflows and management exceptions in one workspace.")
 
-    hero_left, hero_right = st.columns([2.2, 1], gap="large")
+    hero_left, hero_right = st.columns([2.35, 1], gap="large")
     with hero_left:
         st.markdown(
-            '<div class="command-hero"><div class="hero-kicker">LIVE INVENTORY CONTROL</div>'
-            '<div class="hero-title">Run today’s fuel operations from one screen.</div>'
-            '<div class="hero-copy">Record movements, review stock, investigate exceptions and produce management information without searching through menus.</div>'
-            '</div>', unsafe_allow_html=True
+            f'<div class="command-shell"><div class="hero-kicker">INVENTORY CONTROL ROOM</div>'
+            f'<div class="hero-title">Good day, {user}. Your inventory network is ready.</div>'
+            '<div class="hero-copy">Move from live stock to receiving, quality, reconciliation, valuation and assurance without losing operational context.</div>'
+            '<div class="hero-meta"><span><b>CONTROLLED</b> transaction history</span><span><b>LIVE</b> exception monitoring</span><span><b>AUDITED</b> decisions</span></div>'
+            '</div>',unsafe_allow_html=True
         )
     with hero_right:
         st.markdown(
-            f'<div class="today-panel"><div class="today-label">TODAY</div>'
-            f'<div class="today-date">{today:%d %B %Y}</div>'
-            f'<div class="today-company">{company["company_name"]} · {company["application_name"]}</div></div>',
-            unsafe_allow_html=True,
+            f'<div class="control-panel"><div class="control-label">ACTIVE CONTROL SESSION</div>'
+            f'<div class="control-date">{today:%d %B %Y}</div><div class="control-copy">{company["company_name"]}<br>{company["application_name"]}<br><br>Signed in as <b>{user}</b></div>'
+            '<div class="health-ring"><span style="width:100%"></span></div><div class="control-copy" style="margin-top:.55rem">Database connected · audit enabled</div></div>',unsafe_allow_html=True
         )
 
-    st.markdown('<div class="section-label">START AN OPERATION</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-label">WORKFLOW LAUNCHER</div>',unsafe_allow_html=True)
+    launcher_groups={
+        "Move inventory":["Fuel Operations","Storage Operations","Stock in Transit","Inventory Control"],
+        "Manage supply":["Supplier Procurement","Receipt Costing","Supplier Master","Supplier Scorecards"],
+        "Control quality":["Product & Quality","Batch Aging & FEFO","Measurement & Loss Control","Inventory Health"],
+        "Analyse & assure":["Inventory Forecasting","Financial Valuation","Report Centre","Audit Centre"],
+    }
+    launch_columns=st.columns(4,gap="medium")
+    for index,(group,options) in enumerate(launcher_groups.items()):
+        with launch_columns[index]:
+            visible_options=[option for option in options if option in permitted]
+            if visible_options:
+                selected_workspace=st.selectbox(group,visible_options,key=f"command_select_{index}")
+                if st.button(f"Open {selected_workspace}",key=f"command_open_{index}",use_container_width=True,type="primary" if index==0 else "secondary"):
+                    _go(selected_workspace)
+            else:
+                st.markdown(f"**{group}**"); st.caption("No workspace assigned to this role.")
+
+    st.markdown('<div class="section-label">PRIORITY WORKSPACES</div>', unsafe_allow_html=True)
     actions = [
-        ("Record fuel movement", "Post an uplift or delivery and review the resulting balance.", "Fuel Operations", "launch_movement", True),
-        ("Storage operations", "Receive fuel, transfer tanks, load trucks and post returns.", "Storage Operations", "launch_storage_ops", False),
-        ("Supplier procurement", "Manage bookings, releases and supplier claims.", "Supplier Procurement", "launch_procurement", False),
-        ("Inventory forecasting", "Review demand, stock-out risk and reorder quantities.", "Inventory Forecasting", "launch_forecast", False),
-        ("Reconcile physical stock", "Compare measured stock with the system and control adjustments.", "Inventory Control", "launch_reconcile", False),
-        ("Transaction control", "Control corrections and reversals with approvals.", "Transaction Control", "launch_control", False),
-        ("Product & quality", "Control specifications, batches, inspection and release.", "Product & Quality", "launch_quality", False),
-        ("Stock in transit", "Plan, dispatch and receive depot-to-depot transfers.", "Stock in Transit", "launch_transit", False),
-        ("Measurement & losses", "Record tank counts, calibrations and inventory incidents.", "Measurement & Loss Control", "launch_measurement", False),
-        ("Inventory health", "Run integrity checks and investigate control exceptions.", "Inventory Health", "launch_health", False),
-        ("Master reports", "Generate operational and management reports.", "Report Centre", "launch_reports", False),
-        ("Audit centre", "Investigate who performed every important action.", "Audit Centre", "launch_audit", False),
+        ("Record movement", "Post a controlled truck receipt, issue or transfer.", "Fuel Operations", "launch_movement", True),
+        ("Receive into storage", "Record supplier receipts, batches and variances.", "Storage Operations", "launch_storage_ops", False),
+        ("Review exceptions", "Investigate balance, linkage, batch and control issues.", "Inventory Health", "launch_health", False),
+        ("Approve decisions", "Review controlled requests waiting for authorization.", "Approvals", "launch_approvals", False),
+        ("Reconcile stock", "Compare physical measurements with system quantities.", "Inventory Control", "launch_reconcile", False),
+        ("Generate reports", "Create management-ready inventory information.", "Report Centre", "launch_reports", False),
     ]
-    for start_index in range(0,len(actions),4):
-        action_columns=st.columns(4,gap="medium")
-        for column,details in zip(action_columns,actions[start_index:start_index+4]):
+    actions=[action for action in actions if action[2] in permitted]
+    for start_index in range(0,len(actions),3):
+        action_columns=st.columns(3,gap="medium")
+        for column,details in zip(action_columns,actions[start_index:start_index+3]):
             with column: _launcher(*details)
 
     settings = _read(conn, "SELECT minimum_stock_level FROM settings ORDER BY id LIMIT 1")

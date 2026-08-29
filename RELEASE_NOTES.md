@@ -6,6 +6,10 @@ This is the consolidated Foundation V2 inventory release. It manages fuel invent
 
 ## New and consolidated capabilities
 
+- Premium responsive visual system with denser typography, elevated panels, refined forms, tabs and tables.
+- Collapsible business-area navigation with active-page highlighting and one-click page changes.
+- Redesigned Inventory Control Room with role-aware workflow dropdowns and priority workspaces.
+
 - Professional Command Centre and persistent one-click navigation.
 - Truck, depot, tank, product and supplier master controls.
 - Supplier bookings, releases, receipts, claims, invoice matching and landed cost.

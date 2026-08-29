@@ -85,7 +85,7 @@ permitted=allowed_pages(st.session_state.get("role","VIEWER"))
 menu={label:page_name for label,page_name in menu.items() if label in permitted}
 
 labels = list(menu)
-requested = st.query_params.get("page", labels[0])
+requested = st.query_params.get("page", "Command Centre")
 navigation_target = st.session_state.pop("navigation_target", None)
 if navigation_target in labels:
     st.session_state["main_navigation"] = navigation_target
@@ -94,19 +94,38 @@ if "main_navigation" not in st.session_state or st.session_state["main_navigatio
     st.session_state["main_navigation"] = requested if requested in labels else labels[0]
 
 
-def remember_page():
-    st.query_params["page"] = st.session_state["main_navigation"]
+def open_page(label):
+    st.session_state["main_navigation"] = label
+    st.query_params["page"] = label
+    st.rerun()
 
 
-if st.sidebar.button("⌂  Home · Command Centre", use_container_width=True, type="primary"):
-    st.session_state["main_navigation"] = "Command Centre"
-    st.query_params["page"] = "Command Centre"
+active_page=st.session_state["main_navigation"]
+if st.sidebar.button("⌂  Command Centre",use_container_width=True,type="primary" if active_page=="Command Centre" else "secondary",key="nav_command_centre"):
+    open_page("Command Centre")
 
 notice_total=unread_count(conn)
 if notice_total:
     st.sidebar.info(f"🔔 {notice_total} unread notification{'s' if notice_total != 1 else ''}")
 
-selected = st.sidebar.radio("WORKSPACE", labels, key="main_navigation", on_change=remember_page)
+navigation_groups={
+    "Stock Operations":["Fuel Operations","Fleet Inventory","Inventory Control","Measurement & Loss Control","Transaction Control"],
+    "Storage Network":["Depots & Storage","Storage Operations","Stock in Transit"],
+    "Supply & Quality":["Supplier Procurement","Supplier Master","Supplier Scorecards","Receipt Costing","Product & Quality","Batch Aging & FEFO"],
+    "Planning & Finance":["Stock Commitments","Inventory Forecasting","Financial Valuation","Month-End Closing","Inventory Health"],
+    "Control & Assurance":["Evidence Centre","Truck Ledger","Integration Inbox","Approvals","Notifications","Report Centre","Audit Centre"],
+    "Administration":["Configuration","User Access"],
+}
+icons={"Fuel Operations":"⇅","Fleet Inventory":"▣","Inventory Control":"✓","Measurement & Loss Control":"≋","Transaction Control":"↺","Depots & Storage":"▦","Storage Operations":"⇵","Stock in Transit":"→","Supplier Procurement":"◇","Supplier Master":"◎","Supplier Scorecards":"◔","Receipt Costing":"€","Product & Quality":"⚗","Batch Aging & FEFO":"⌛","Stock Commitments":"◈","Inventory Forecasting":"∿","Financial Valuation":"◉","Month-End Closing":"▤","Inventory Health":"♥","Evidence Centre":"▧","Truck Ledger":"≡","Integration Inbox":"⇩","Approvals":"✔","Notifications":"●","Report Centre":"▥","Audit Centre":"⌕","Configuration":"⚙","User Access":"◇"}
+for group,items in navigation_groups.items():
+    visible=[item for item in items if item in labels]
+    if not visible: continue
+    with st.sidebar.expander(group,expanded=active_page in visible):
+        for label in visible:
+            if st.button(f"{icons.get(label,'·')}  {label}",key=f"nav_{label}",use_container_width=True,type="primary" if active_page==label else "secondary"):
+                open_page(label)
+
+selected=st.session_state["main_navigation"]
 page = menu[selected]
 render_request_confirmation()
 st.sidebar.divider()

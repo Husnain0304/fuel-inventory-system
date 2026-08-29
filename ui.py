@@ -20,68 +20,86 @@ def apply_theme(company=None):
     accent = company.get("accent_color", GREEN)
     st.markdown(f"""
     <style>
-    :root{{--primary:{primary};--secondary:{secondary};--accent:{accent};}}
-    .stApp{{background:#F4F6F8;color:#172033}}
-    [data-testid="stSidebar"]{{background:linear-gradient(180deg,#111827,#0B1220)}}
+    :root{{--primary:{primary};--secondary:{secondary};--accent:{accent};--ink:#111827;--muted:#667085;--line:#E4E7EC;--canvas:#F3F5F8;}}
+    html,body,[class*="css"]{{font-family:Inter,ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}}
+    .stApp{{background:radial-gradient(circle at 88% 0%,{primary}0A 0,transparent 24rem),var(--canvas);color:var(--ink)}}
+    [data-testid="stHeader"]{{background:rgba(243,245,248,.88);backdrop-filter:blur(10px);border-bottom:1px solid rgba(228,231,236,.8)}}
+    [data-testid="stSidebar"]{{background:linear-gradient(180deg,#111827 0%,#0B1220 55%,#080D18 100%);border-right:1px solid #263244;min-width:292px;max-width:292px}}
+    [data-testid="stSidebar"]>div:first-child{{padding:1rem .8rem 1.2rem}}
     [data-testid="stSidebar"] *{{color:#F8FAFC}}
-    [data-testid="stSidebar"] .stRadio label{{padding:.45rem .58rem;border-radius:.55rem}}
-    .block-container{{padding-top:1.25rem;padding-bottom:3rem;max-width:1560px}}
-    h1,h2,h3{{color:#172033;letter-spacing:-.025em}}
-    .stButton>button,.stDownloadButton>button{{border-radius:9px;font-weight:650;min-height:2.65rem}}
-    .stButton>button[kind="primary"]{{background:{primary};border-color:{primary}}}
-    [data-testid="stMetric"],.product-card{{background:white;border:1px solid #E4E8EE;border-radius:14px;
-      padding:17px 19px;box-shadow:0 7px 24px rgba(15,23,42,.055)}}
-    div[data-testid="stDataFrame"]{{border:1px solid #E4E8EE;border-radius:12px;overflow:hidden}}
-    .page-head{{display:flex;justify-content:space-between;align-items:center;gap:1rem;background:white;
-      border:1px solid #E4E8EE;border-left:5px solid {primary};padding:19px 22px;border-radius:14px;margin-bottom:1.15rem}}
-    .page-head h1{{font-size:1.55rem;margin:0}} .page-head p{{color:#64748B;margin:.25rem 0 0}}
-    .user-chip{{background:{primary}12;color:{primary};padding:7px 12px;border-radius:999px;font-weight:700;font-size:.78rem}}
-    .stat{{background:white;border:1px solid #E4E8EE;border-radius:14px;padding:18px;min-height:125px;
-      box-shadow:0 7px 24px rgba(15,23,42,.05)}}
-    .stat-label{{color:#64748B;font-size:.72rem;font-weight:750;letter-spacing:.075em;text-transform:uppercase}}
-    .stat-value{{font-size:1.72rem;font-weight:780;margin:.38rem 0;color:#111827}} .stat-note{{color:#64748B;font-size:.79rem}}
-    .action-card{{background:white;border:1px solid #E4E8EE;border-radius:14px;padding:17px;min-height:105px}}
-    .action-title{{font-weight:760;font-size:1rem;color:#172033}} .action-note{{color:#64748B;font-size:.8rem;margin-top:.28rem}}
-    .eyebrow{{color:{primary};font-size:.73rem;font-weight:800;letter-spacing:.1em;text-transform:uppercase}}
-    .command-hero{{background:linear-gradient(135deg,#111827 0%,#202A3C 100%);color:white;border-radius:18px;
-      padding:28px 30px;min-height:176px;box-shadow:0 18px 42px rgba(15,23,42,.16)}}
-    .hero-kicker{{font-size:.7rem;font-weight:800;letter-spacing:.13em;color:#CBD5E1}}
-    .hero-title{{font-size:2rem;line-height:1.15;font-weight:780;max-width:720px;margin:.65rem 0}}
-    .hero-copy{{color:#CBD5E1;max-width:730px;line-height:1.55}}
-    .today-panel{{background:{primary};color:white;border-radius:18px;padding:27px;min-height:176px;
-      box-shadow:0 18px 42px {primary}35}}
-    .today-label{{font-size:.7rem;font-weight:800;letter-spacing:.13em;opacity:.75}}
-    .today-date{{font-size:1.65rem;font-weight:780;margin:1.15rem 0 .4rem}}
-    .today-company{{font-size:.82rem;opacity:.8}}
-    .section-label{{font-size:.69rem;font-weight:850;letter-spacing:.115em;color:#64748B;margin:1.35rem 0 .65rem}}
-    .launch-card{{background:white;border:1px solid #E4E8EE;border-radius:14px 14px 0 0;padding:18px 18px 10px;min-height:105px}}
-    .launch-title{{font-size:1rem;font-weight:760;color:#172033}} .launch-copy{{font-size:.79rem;color:#64748B;line-height:1.45;margin-top:.4rem}}
-    .queue-item{{display:flex;justify-content:space-between;align-items:center;background:white;border:1px solid #E4E8EE;
-      border-left:4px solid #F59E0B;border-radius:10px;padding:13px 14px;margin-bottom:.55rem}}
-    .queue-item.critical{{border-left-color:#C63A3A}} .queue-item span{{font-size:.78rem;color:#64748B}}
-    .queue-item strong{{font-size:.66rem;letter-spacing:.08em;color:#9A3412}}
-    .timeline-row{{display:flex;gap:.75rem;padding:.68rem .15rem;border-bottom:1px solid #EDF0F4}}
-    .timeline-dot{{width:9px;height:9px;border-radius:50%;background:{primary};margin-top:.38rem;flex:none}}
-    .timeline-row b{{display:block;font-size:.79rem}} .timeline-row span{{display:block;color:#475569;font-size:.76rem;
-      line-height:1.35;max-height:2.1rem;overflow:hidden}} .timeline-row small{{color:#94A3B8;font-size:.67rem}}
+    [data-testid="stSidebar"] [data-testid="stExpander"]{{border:0;background:transparent}}
+    [data-testid="stSidebar"] [data-testid="stExpander"] details{{border:0}}
+    [data-testid="stSidebar"] [data-testid="stExpander"] summary{{font-size:.69rem;font-weight:800;letter-spacing:.09em;text-transform:uppercase;color:#98A2B3;padding:.7rem .35rem .35rem}}
+    [data-testid="stSidebar"] .stButton>button{{justify-content:flex-start;text-align:left;background:transparent;border:1px solid transparent;color:#D7DEE9;box-shadow:none;min-height:2.25rem;padding:.42rem .65rem}}
+    [data-testid="stSidebar"] .stButton>button:hover{{background:#FFFFFF0D;border-color:#FFFFFF16;color:white;transform:none}}
+    [data-testid="stSidebar"] .stButton>button[kind="primary"]{{background:linear-gradient(135deg,{primary},#B52B2B);border-color:#D95C5C;color:white;box-shadow:0 8px 22px {primary}50}}
+    .sidebar-brand{{background:#FFFFFF0A;border:1px solid #FFFFFF12;border-radius:16px;padding:12px;margin-bottom:.7rem}}
+    .sidebar-product{{font-size:.67rem;color:#98A2B3;letter-spacing:.11em;text-transform:uppercase;font-weight:800;margin-top:.55rem}}
+    .sidebar-tagline{{font-size:.71rem;color:#667085;line-height:1.35;margin-top:.15rem}}
+    .block-container{{padding-top:1.05rem;padding-bottom:3.5rem;max-width:1500px}}
+    h1,h2,h3{{color:var(--ink);letter-spacing:-.035em;font-weight:750}} h2{{font-size:1.35rem}} h3{{font-size:1.06rem}}
+    p,.stCaption{{color:var(--muted)}}
+    .stButton>button,.stDownloadButton>button{{border-radius:10px;font-weight:680;min-height:2.55rem;border:1px solid #D0D5DD;transition:.16s ease;box-shadow:0 1px 2px rgba(16,24,40,.04)}}
+    .stButton>button:hover,.stDownloadButton>button:hover{{border-color:{primary};color:{primary};transform:translateY(-1px);box-shadow:0 7px 18px rgba(16,24,40,.08)}}
+    .stButton>button[kind="primary"]{{background:linear-gradient(135deg,{primary},#A92626);border-color:{primary};color:white;box-shadow:0 7px 18px {primary}35}}
+    [data-testid="stMetric"]{{background:linear-gradient(145deg,#FFFFFF,#FBFCFD);border:1px solid var(--line);border-radius:16px;padding:18px 20px;box-shadow:0 10px 28px rgba(16,24,40,.055)}}
+    [data-testid="stMetricLabel"]{{color:#667085;font-weight:650}} [data-testid="stMetricValue"]{{color:#101828;font-weight:760;letter-spacing:-.04em}}
+    [data-testid="stForm"]{{background:#FFFFFF;border:1px solid var(--line);border-radius:16px;padding:1.2rem;box-shadow:0 8px 24px rgba(16,24,40,.045)}}
+    [data-baseweb="input"]>div,[data-baseweb="select"]>div,[data-baseweb="textarea"]>div{{border-radius:10px!important;border-color:#D0D5DD!important;background:#FCFCFD!important}}
+    [data-baseweb="tab-list"]{{gap:.35rem;background:#EAECF0;padding:.28rem;border-radius:12px}}
+    [data-baseweb="tab"]{{border-radius:9px;padding:.6rem .9rem;border:0}}
+    [aria-selected="true"][data-baseweb="tab"]{{background:white;color:{primary};box-shadow:0 2px 7px rgba(16,24,40,.09)}}
+    div[data-testid="stDataFrame"]{{border:1px solid var(--line);border-radius:14px;overflow:hidden;box-shadow:0 7px 22px rgba(16,24,40,.04)}}
+    [data-testid="stAlert"]{{border-radius:12px;border-width:1px}}
+    hr{{border-color:var(--line)!important;margin:1.2rem 0!important}}
+    .page-head{{position:relative;overflow:hidden;display:flex;justify-content:space-between;align-items:center;gap:1rem;background:linear-gradient(120deg,#FFFFFF 0%,#FFFFFF 70%,{primary}08 100%);border:1px solid var(--line);padding:22px 25px;border-radius:18px;margin-bottom:1.2rem;box-shadow:0 10px 30px rgba(16,24,40,.055)}}
+    .page-head:before{{content:"";position:absolute;left:0;top:0;bottom:0;width:5px;background:linear-gradient(180deg,{primary},#D74B4B)}}
+    .page-head h1{{font-size:1.62rem;margin:0}} .page-head p{{color:#667085;margin:.3rem 0 0;font-size:.88rem}}
+    .page-context{{display:flex;align-items:center;gap:.6rem}} .live-dot{{width:8px;height:8px;border-radius:50%;background:{accent};box-shadow:0 0 0 5px {accent}18}}
+    .user-chip{{background:#FFFFFF;border:1px solid #E4E7EC;color:#344054;padding:8px 12px;border-radius:999px;font-weight:700;font-size:.75rem;white-space:nowrap}}
+    .stat{{position:relative;overflow:hidden;background:linear-gradient(145deg,#FFFFFF,#FBFCFD);border:1px solid var(--line);border-radius:16px;padding:18px 19px;min-height:126px;box-shadow:0 10px 28px rgba(16,24,40,.055)}}
+    .stat:after{{content:"";position:absolute;width:78px;height:78px;border-radius:50%;right:-34px;top:-34px;background:{primary}0D}}
+    .stat-label{{color:#667085;font-size:.68rem;font-weight:800;letter-spacing:.09em;text-transform:uppercase}}
+    .stat-value{{font-size:1.75rem;font-weight:780;margin:.42rem 0;color:#101828;letter-spacing:-.04em}} .stat-note{{color:#667085;font-size:.76rem}}
+    .command-shell{{background:linear-gradient(130deg,#101828 0%,#17233A 62%,{primary} 150%);border:1px solid #344054;color:white;border-radius:22px;padding:32px 34px;min-height:220px;box-shadow:0 22px 55px rgba(16,24,40,.22);position:relative;overflow:hidden}}
+    .command-shell:after{{content:"";position:absolute;right:-100px;top:-150px;width:360px;height:360px;border-radius:50%;border:70px solid rgba(255,255,255,.035)}}
+    .hero-kicker{{font-size:.68rem;font-weight:850;letter-spacing:.15em;color:#D0D5DD}}
+    .hero-title{{font-size:2.28rem;line-height:1.08;font-weight:790;max-width:700px;margin:.72rem 0;letter-spacing:-.045em}}
+    .hero-copy{{color:#CDD5E1;max-width:720px;line-height:1.6;font-size:.91rem}}
+    .hero-meta{{display:flex;gap:1rem;margin-top:1.35rem;color:#98A2B3;font-size:.72rem}} .hero-meta b{{color:white}}
+    .control-panel{{background:#FFFFFF;border:1px solid var(--line);border-radius:22px;padding:24px;min-height:220px;box-shadow:0 16px 40px rgba(16,24,40,.08)}}
+    .control-label{{color:{primary};font-size:.67rem;font-weight:850;letter-spacing:.13em;text-transform:uppercase}}
+    .control-date{{font-size:1.45rem;font-weight:780;color:#101828;margin:.7rem 0 .2rem}} .control-copy{{color:#667085;font-size:.78rem;line-height:1.45}}
+    .health-ring{{margin-top:1rem;height:7px;background:#EAECF0;border-radius:99px;overflow:hidden}} .health-ring span{{display:block;height:100%;background:linear-gradient(90deg,{accent},#42C98A);border-radius:99px}}
+    .section-label{{font-size:.68rem;font-weight:850;letter-spacing:.12em;color:#667085;margin:1.45rem 0 .7rem;text-transform:uppercase}}
+    .workspace-card{{background:#FFFFFF;border:1px solid var(--line);border-radius:16px 16px 0 0;padding:18px 18px 12px;min-height:112px;transition:.16s ease}}
+    .workspace-card:hover{{border-color:#C8CDD5;box-shadow:0 12px 28px rgba(16,24,40,.07)}}
+    .workspace-icon{{width:34px;height:34px;border-radius:10px;background:{primary}0D;color:{primary};display:flex;align-items:center;justify-content:center;font-size:1rem;margin-bottom:.7rem}}
+    .workspace-title{{font-size:.94rem;font-weight:760;color:#101828}} .workspace-copy{{font-size:.76rem;color:#667085;line-height:1.42;margin-top:.32rem}}
+    .panel{{background:white;border:1px solid var(--line);border-radius:17px;padding:20px;box-shadow:0 9px 25px rgba(16,24,40,.045)}}
+    .queue-item{{display:flex;justify-content:space-between;align-items:center;background:#FCFCFD;border:1px solid var(--line);border-left:4px solid #F79009;border-radius:11px;padding:12px 13px;margin-bottom:.5rem}}
+    .queue-item.critical{{border-left-color:#D92D20}} .queue-item span{{font-size:.75rem;color:#667085}} .queue-item strong{{font-size:.63rem;letter-spacing:.09em;color:#B54708}}
+    .timeline-row{{display:flex;gap:.75rem;padding:.68rem .1rem;border-bottom:1px solid #F0F2F5}} .timeline-dot{{width:8px;height:8px;border-radius:50%;background:{primary};margin-top:.38rem;flex:none;box-shadow:0 0 0 4px {primary}12}}
+    .timeline-row b{{display:block;font-size:.78rem}} .timeline-row span{{display:block;color:#475467;font-size:.74rem;line-height:1.35;max-height:2.1rem;overflow:hidden}} .timeline-row small{{color:#98A2B3;font-size:.65rem}}
+    @media(max-width:900px){{[data-testid="stSidebar"]{{min-width:255px;max-width:255px}}.block-container{{padding-left:1rem;padding-right:1rem}}.hero-title{{font-size:1.7rem}}.command-shell,.control-panel{{min-height:auto}}.page-head{{align-items:flex-start;flex-direction:column}}}}
     </style>""", unsafe_allow_html=True)
 
 
 def render_sidebar_brand(company=None):
     company = company or profile()
     logo = logo_file(company)
-    if logo:
-        st.sidebar.image(str(logo), width=180)
-    else:
-        st.sidebar.markdown(f"## {escape(company['company_name'])}")
-    st.sidebar.caption(escape(company.get("application_name", "Fuel Inventory Control")).upper())
+    st.sidebar.markdown('<div class="sidebar-brand">',unsafe_allow_html=True)
+    if logo: st.sidebar.image(str(logo), width=168)
+    else: st.sidebar.markdown(f"### {escape(company['company_name'])}")
+    st.sidebar.markdown(f'<div class="sidebar-product">{escape(company.get("application_name","Fuel Inventory Control"))}</div><div class="sidebar-tagline">{escape(company.get("tagline", "Controlled inventory intelligence"))}</div>',unsafe_allow_html=True)
+    st.sidebar.markdown('</div>',unsafe_allow_html=True)
 
 
 def page_header(title, subtitle):
     user = escape(str(st.session_state.get("user", "User")))
     role = escape(str(st.session_state.get("role", "")).title())
     st.markdown(f'<div class="page-head"><div><h1>{escape(title)}</h1><p>{escape(subtitle)}</p></div>'
-                f'<span class="user-chip">{user} · {role}</span></div>', unsafe_allow_html=True)
+                f'<div class="page-context"><span class="live-dot"></span><span class="user-chip">{user} · {role}</span></div></div>', unsafe_allow_html=True)
 
 
 def stat_card(label, value, note=""):
