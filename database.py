@@ -59,7 +59,6 @@ class ConnectionManager:
                     keepalives_idle=30,
                     keepalives_interval=10,
                     keepalives_count=5,
-                    options="-c statement_timeout=30000 -c idle_in_transaction_session_timeout=30000",
                 )
             except psycopg2.OperationalError as error:
                 last_error = error
