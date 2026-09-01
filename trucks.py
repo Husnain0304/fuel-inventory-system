@@ -23,13 +23,41 @@ def _inventory(conn):
     """, conn)
 
 
-@st.dialog("Edit inventory profile")
+@st.dialog("Truck inventory details", width="large")
 def edit_truck(conn, truck):
     products = pd.read_sql_query("SELECT id,name FROM products WHERE active=TRUE ORDER BY name", conn)
     product_map = dict(zip(products["name"], products["id"]))
+    if not product_map:
+        st.error("Create an active fuel product before editing this truck.")
+        if st.button("Close", use_container_width=True):
+            st.rerun()
+        return
     current_product = truck["product"] if truck["product"] in product_map else list(product_map)[0]
+    balance = float(truck["balance"] or 0)
+    capacity_now = float(truck["capacity_liters"] or 0)
+    available_now = max(capacity_now - balance, 0)
+    utilization_now = balance / capacity_now * 100 if capacity_now else 0
+    minimum_now = float(truck["minimum_stock_liters"] or 0)
+    reorder_now = float(truck["reorder_level_liters"] or 0)
+    condition = "Critical" if minimum_now and balance <= minimum_now else ("Reorder" if reorder_now and balance <= reorder_now else ("Setup required" if not capacity_now else "Healthy"))
+
+    st.markdown(
+        f'<div style="background:linear-gradient(135deg,#101828,#1D2939);color:white;border-radius:16px;padding:18px 20px;margin-bottom:1rem">'
+        f'<div style="font-size:.65rem;color:#98A2B3;font-weight:800;letter-spacing:.1em;text-transform:uppercase">Fleet inventory asset</div>'
+        f'<div style="display:flex;justify-content:space-between;gap:1rem;align-items:center;margin-top:.3rem"><div style="font-size:1.45rem;font-weight:800">{escape(str(truck["truck"]))}</div>'
+        f'<div style="background:#FFFFFF16;border:1px solid #FFFFFF22;border-radius:999px;padding:.38rem .65rem;font-size:.65rem;font-weight:800">{escape(condition.upper())}</div></div>'
+        f'<div style="color:#D0D5DD;font-size:.76rem;margin-top:.25rem">{escape(str(current_product))} · {escape(str(truck["operational_status"]).title())}</div></div>',
+        unsafe_allow_html=True,
+    )
+    summary = st.columns(4)
+    summary[0].metric("Live inventory", f"{balance:,.2f} L")
+    summary[1].metric("Capacity", f"{capacity_now:,.0f} L")
+    summary[2].metric("Available", f"{available_now:,.0f} L")
+    summary[3].metric("Utilization", f"{utilization_now:,.1f}%")
+    st.progress(max(0.0, min(utilization_now / 100, 1.0)), text=f"Current tank utilization · {condition}")
+    st.markdown("#### Inventory controls")
+    st.caption("Update the truck profile below. Saving changes creates an audit record; it does not post an inventory movement.")
     with st.form(f"edit_truck_{truck['id']}"):
-        st.markdown(f"#### {truck['truck']}")
         c1, c2 = st.columns(2)
         product = c1.selectbox("Fuel product", list(product_map), index=list(product_map).index(current_product))
         status_options = ["ACTIVE", "MAINTENANCE", "QUARANTINED", "INACTIVE"]
@@ -40,7 +68,7 @@ def edit_truck(conn, truck):
         reorder = c1.number_input("Reorder level (L)", min_value=0.0, value=float(truck["reorder_level_liters"] or 0), step=100.0)
         price = c2.number_input("Custom selling price", min_value=0.0, value=float(truck["selling_price_per_liter"] or 0), format="%.3f")
         notes = st.text_area("Notes", value=str(truck["notes"] or ""))
-        if st.form_submit_button("Save inventory profile", type="primary"):
+        if st.form_submit_button("Save changes", type="primary", use_container_width=True):
             if capacity and float(truck["balance"]) > capacity:
                 st.error(f"Capacity cannot be below the current stock of {truck['balance']:,.2f} L.")
             elif capacity and reorder > capacity:
@@ -61,6 +89,13 @@ def edit_truck(conn, truck):
                                  "minimum_stock":minimum,"reorder_level":reorder})
                 st.success("Inventory profile updated.")
                 st.rerun()
+    close_column, ledger_column = st.columns(2)
+    if close_column.button("Close", use_container_width=True, key=f"close_truck_dialog_{truck['id']}"):
+        st.rerun()
+    if ledger_column.button("Open truck ledger", use_container_width=True, key=f"dialog_ledger_{truck['id']}"):
+        st.session_state["ledger_truck"] = truck["truck"]
+        st.session_state["navigation_target"] = "Truck Ledger"
+        st.rerun()
 
 
 def render_trucks(conn, cursor):
@@ -263,41 +298,5 @@ def render_trucks(conn, cursor):
                     available.markdown(f'<div class="fleet-row-label">Available</div><div class="fleet-row-value">{float(card["available_space"]):,.0f} <small>L</small></div>', unsafe_allow_html=True)
                     reorder.markdown(f'<div class="fleet-row-label">Reorder at</div><div class="fleet-row-value">{float(card["reorder_level_liters"]):,.0f} <small>L</small></div>', unsafe_allow_html=True)
                     activity.markdown(f'<div class="fleet-row-label">Last movement</div><div class="fleet-row-value" style="font-size:.78rem">{escape(last_movement)}</div>', unsafe_allow_html=True)
-                    if action.button("View details", key=f"view_fleet_row_{int(card['id'])}", use_container_width=True):
-                        st.session_state["fleet_inspector_truck"] = card["truck"]
-                        st.rerun()
-
-        st.markdown("#### Truck inspector")
-        selected_truck = st.selectbox(
-            "Select a truck for full details",
-            view["truck"].tolist(),
-            key="fleet_inspector_truck",
-        )
-        row = view[view["truck"] == selected_truck].iloc[0]
-        balance = float(row["balance"])
-        capacity = float(row["capacity_liters"])
-        utilization = float(row["utilization"])
-        available = float(row["available_space"])
-
-        with st.container(border=True):
-            heading, profile_action, ledger_action = st.columns([3.2, 1, 1])
-            heading.markdown(f"### {row['truck']}")
-            heading.caption(f"{row['product'] or 'Product not assigned'} · {row['operational_status'].title()} · {row['stock_condition'].title()}")
-            if profile_action.button("Edit profile", key=f"edit_profile_{row['id']}", use_container_width=True):
-                edit_truck(conn, row)
-            if ledger_action.button("Open ledger", key=f"open_ledger_{row['id']}", use_container_width=True, type="primary"):
-                st.session_state["ledger_truck"] = row["truck"]
-                st.session_state["navigation_target"] = "Truck Ledger"
-                st.rerun()
-
-            detail_columns = st.columns(6)
-            detail_columns[0].metric("On hand", f"{balance:,.2f} L")
-            detail_columns[1].metric("Capacity", f"{capacity:,.0f} L")
-            detail_columns[2].metric("Available", f"{available:,.0f} L")
-            detail_columns[3].metric("Utilization", f"{utilization:,.1f}%")
-            detail_columns[4].metric("Reorder at", f"{float(row['reorder_level_liters']):,.0f} L")
-            detail_columns[5].metric("Minimum", f"{float(row['minimum_stock_liters']):,.0f} L")
-            last_movement = row["last_movement"] if pd.notna(row["last_movement"]) else "No movements"
-            st.progress(max(0.0, min(utilization / 100, 1.0)), text=f"{row['stock_condition'].title()} · Last movement: {last_movement}")
-            if row["notes"]:
-                st.caption(f"Notes: {row['notes']}")
+                    if action.button("↗", key=f"view_fleet_row_{int(card['id'])}", help="Open truck details", use_container_width=True, type="primary"):
+                        edit_truck(conn, card)
