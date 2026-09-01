@@ -1,7 +1,9 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime
+from html import escape
 import io  # Required for in-memory Excel file generation
+from ui import page_header
 
 
 def normalize_partner_id(value):
@@ -245,7 +247,7 @@ def render_transactions(conn, cursor, truck_dict, truck_list):
     if "user" not in st.session_state:
         st.session_state["user"] = "Admin_User"
 
-    st.title("🔄 Transactions & Logistics")
+    page_header("Fuel Operations", "Record controlled truck inventory movements, transfers and transaction history.")
 
     if not truck_list:
         st.warning("Add a truck first.")
@@ -255,12 +257,24 @@ def render_transactions(conn, cursor, truck_dict, truck_list):
     supplier_dict = {row['name']: row['id'] for _, row in suppliers_df.iterrows()}
     supplier_list = list(supplier_dict.keys())
 
+    summary=pd.read_sql_query("""SELECT COUNT(DISTINCT tr.id) AS trucks,
+        COALESCE(SUM(CASE WHEN tx.type='IN' THEN tx.liters ELSE -tx.liters END),0) AS balance,
+        COALESCE(SUM(CASE WHEN tx.date=%s AND tx.type='IN' THEN tx.liters ELSE 0 END),0) AS today_in,
+        COALESCE(SUM(CASE WHEN tx.date=%s AND tx.type='OUT' THEN tx.liters ELSE 0 END),0) AS today_out
+        FROM trucks tr LEFT JOIN transactions tx ON tx.truck_id=tr.id AND COALESCE(tx.record_status,'POSTED')='POSTED'""",conn,params=[str(datetime.now().date()),str(datetime.now().date())]).iloc[0]
+    metric_columns=st.columns(4)
+    metric_columns[0].metric("Truck inventory",f"{float(summary.balance):,.0f} L")
+    metric_columns[1].metric("Registered trucks",f"{int(summary.trucks)}")
+    metric_columns[2].metric("Received today",f"{float(summary.today_in):,.0f} L")
+    metric_columns[3].metric("Issued today",f"{float(summary.today_out):,.0f} L")
+    st.markdown('<div class="operations-intro"><div><b>Movement workspace</b><span>Choose a workflow below. Every posted movement immediately updates the truck ledger and audit trail.</span></div><div class="operations-badge">LIVE CONTROL</div></div>',unsafe_allow_html=True)
+
     tab1, tab2, tab3, tab4, tab5 = st.tabs([
-        "➕ Add Entry", 
-        "🚛 Truck Transfer", 
-        "🏢 Manage Suppliers", 
-        "📜 View & Filter History", 
-        "📋 View Audit Logs"
+        "Record movement", 
+        "Truck transfer", 
+        "Suppliers", 
+        "Transaction history", 
+        "Audit trail"
     ])
 
     active_user = st.session_state.get("user", "Admin_User")
@@ -270,24 +284,26 @@ def render_transactions(conn, cursor, truck_dict, truck_list):
     # TAB 1: ADD ENTRY (UPLIFT / DELIVERY)
     # ==========================================
     with tab1:
-        mode = st.radio("Select Action Type", ["UPLIFT (Fuel IN)", "DELIVERY (Fuel OUT)"], horizontal=True)
-        truck = st.selectbox("Select Truck", truck_list, key="add_tx_truck")
+        st.markdown('<div class="form-section-title">1 · Select movement direction</div>',unsafe_allow_html=True)
+        mode = st.radio("Movement direction", ["Fuel IN · Receive into truck", "Fuel OUT · Issue from truck"], horizontal=True,label_visibility="collapsed")
+        st.markdown('<div class="form-section-title">2 · Select inventory asset</div>',unsafe_allow_html=True)
+        truck = st.selectbox("Truck", truck_list, key="add_tx_truck",label_visibility="collapsed")
         truck_id = truck_dict[truck]
 
         balance = get_balance(conn, truck_id)
         truck_controls = get_truck_controls(conn, truck_id)
-        st.info(f"Current Balance for **{truck}**: **{balance:,.2f} L**")
-        if truck_controls["capacity"]:
-            st.caption(f"Tank capacity: {truck_controls['capacity']:,.0f} L · Available space: {max(truck_controls['capacity']-balance,0):,.0f} L")
+        capacity=float(truck_controls["capacity"] or 0); available=max(capacity-balance,0) if capacity else 0; utilization=(balance/capacity*100) if capacity else 0
+        utilisation_class="warning" if utilization>=90 else "positive"
+        st.markdown(f'<div class="balance-panel"><div><small>Current inventory · {escape(truck)}</small><strong>{balance:,.2f} L</strong><span>System-posted truck balance</span></div><div><small>Available capacity</small><strong class="positive">{available:,.0f} L</strong><span>{capacity:,.0f} L rated capacity</span></div><div><small>Utilisation</small><strong class="{utilisation_class}">{utilization:,.1f}%</strong><span>{escape(truck_controls["status"].title())} for movements</span></div></div>',unsafe_allow_html=True)
         if truck_controls["status"] != "ACTIVE":
             st.warning(f"This truck is {truck_controls['status'].title()}. New movements are blocked.")
 
-        if mode == "UPLIFT (Fuel IN)":
+        st.markdown('<div class="form-section-title">3 · Complete movement details</div>',unsafe_allow_html=True)
+        if mode.startswith("Fuel IN"):
             with st.form("uplift_form", clear_on_submit=True):
-                in_date = st.date_input("Date", value=datetime.now().date(), key="uplift_date")
-                in_liters = st.number_input("Liters (IN)", min_value=0.0, step=100.0, value=0.0, key="uplift_liters_input")
-                selected_supplier_name = st.selectbox("Select Supplier", supplier_list if supplier_list else ["Default Supplier"])
-                submit_uplift = st.form_submit_button("Save Uplift Entry", type="primary")
+                c1,c2=st.columns(2); in_date=c1.date_input("Movement date",value=datetime.now().date(),key="uplift_date"); in_liters=c2.number_input("Quantity received (L)",min_value=0.0,step=100.0,value=0.0,key="uplift_liters_input")
+                c1,c2=st.columns(2); selected_supplier_name=c1.selectbox("Supplier",supplier_list if supplier_list else ["Default Supplier"]); in_reference=c2.text_input("Receipt / ticket reference")
+                submit_uplift = st.form_submit_button("Post fuel receipt", type="primary",use_container_width=True)
 
             if submit_uplift:
                 if truck_controls["status"] != "ACTIVE":
@@ -304,16 +320,16 @@ def render_transactions(conn, cursor, truck_dict, truck_list):
                         st.error(str(error)); st.stop()
                     supplier_id = supplier_dict.get(selected_supplier_name, None)
                     cursor.execute("""
-                        INSERT INTO transactions (truck_id, date, liters, type, supplier_id, created_by, product_id, movement_category)
-                        VALUES (%s, %s, %s, 'IN', %s, %s, %s, 'UPLIFT')
-                    """, (truck_id, str(in_date), in_liters, supplier_id, active_user, truck_controls["product_id"]))
+                        INSERT INTO transactions (truck_id, date, liters, type, supplier_id, created_by, product_id, movement_category,ticket_number)
+                        VALUES (%s, %s, %s, 'IN', %s, %s, %s, 'UPLIFT',%s)
+                    """, (truck_id, str(in_date), in_liters, supplier_id, active_user, truck_controls["product_id"],in_reference.strip() or None))
                     conn.commit()
                     log_action(cursor, conn, f"Added Uplift of {in_liters:,.2f} L from Supplier '{selected_supplier_name}' for Truck '{truck}' on date {in_date}")
-                    st.success("Uplift recorded successfully! ✅")
+                    st.success("Fuel receipt posted successfully.")
                     st.rerun()
 
             # --- Scrollable Previous Uplift Entries (5-row height view) ---
-            st.markdown("### 📜 Previous Uplift (IN) Entries")
+            st.markdown('<div class="history-heading"><b>Recent fuel receipts</b><span>Selected truck</span></div>',unsafe_allow_html=True)
             recent_in_df = pd.read_sql_query("""
                 SELECT 
                     transactions.id AS "TX ID",
@@ -337,11 +353,11 @@ def render_transactions(conn, cursor, truck_dict, truck_list):
                     height=220  # Approx 5 rows with scrollbar
                 )
 
-        elif mode == "DELIVERY (Fuel OUT)":
+        else:
             with st.form("delivery_form", clear_on_submit=True):
-                out_date = st.date_input("Date", value=datetime.now().date(), key="delivery_date")
-                out_liters = st.number_input("Liters (OUT)", min_value=0.0, step=100.0, value=0.0, key="delivery_liters_input")
-                submit_delivery = st.form_submit_button("Save Delivery Entry", type="primary")
+                c1,c2=st.columns(2); out_date=c1.date_input("Movement date",value=datetime.now().date(),key="delivery_date"); out_liters=c2.number_input("Quantity issued (L)",min_value=0.0,step=100.0,value=0.0,key="delivery_liters_input")
+                out_reference=st.text_input("Delivery / issue reference")
+                submit_delivery = st.form_submit_button("Post fuel issue", type="primary",use_container_width=True)
 
             if submit_delivery:
                 if truck_controls["status"] != "ACTIVE":
@@ -357,16 +373,16 @@ def render_transactions(conn, cursor, truck_dict, truck_list):
                     except ValueError as error:
                         st.error(str(error)); st.stop()
                     cursor.execute("""
-                        INSERT INTO transactions (truck_id, date, liters, type, created_by, product_id, movement_category)
-                        VALUES (%s, %s, %s, 'OUT', %s, %s, 'DELIVERY')
-                    """, (truck_id, str(out_date), out_liters, active_user, truck_controls["product_id"]))
+                        INSERT INTO transactions (truck_id, date, liters, type, created_by, product_id, movement_category,ticket_number)
+                        VALUES (%s, %s, %s, 'OUT', %s, %s, 'DELIVERY',%s)
+                    """, (truck_id, str(out_date), out_liters, active_user, truck_controls["product_id"],out_reference.strip() or None))
                     conn.commit()
                     log_action(cursor, conn, f"Added Delivery of {out_liters:,.2f} L for Truck '{truck}' on date {out_date}")
-                    st.success("Delivery recorded successfully! ✅")
+                    st.success("Fuel issue posted successfully.")
                     st.rerun()
 
             # --- Scrollable Previous Delivery Entries (5-row height view) ---
-            st.markdown("### 📜 Previous Delivery (OUT) Entries")
+            st.markdown('<div class="history-heading"><b>Recent fuel issues</b><span>Selected truck</span></div>',unsafe_allow_html=True)
             recent_out_df = pd.read_sql_query("""
                 SELECT 
                     transactions.id AS "TX ID",
@@ -392,7 +408,7 @@ def render_transactions(conn, cursor, truck_dict, truck_list):
     # TAB 2: TRUCK TO TRUCK TRANSFER
     # ==========================================
     with tab2:
-        st.subheader("Direct Fuel Transfer")
+        st.markdown('<div class="operations-intro"><div><b>Controlled truck-to-truck transfer</b><span>The system posts a linked OUT and IN pair in one database transaction.</span></div><div class="operations-badge">DUAL ENTRY</div></div>',unsafe_allow_html=True)
         col_t1, col_t2 = st.columns(2)
         
         source_truck = col_t1.selectbox("From Truck (Source)", truck_list, key="transfer_source")
@@ -406,33 +422,33 @@ def render_transactions(conn, cursor, truck_dict, truck_list):
 
         source_id = truck_dict[source_truck]
         source_balance = get_balance(conn, source_id)
-        col_t1.info(f"Source Balance: {source_balance:,.2f} L")
+        col_t1.metric("Source available",f"{source_balance:,.2f} L")
         
         if dest_truck:
             dest_id = truck_dict[dest_truck]
             dest_balance = get_balance(conn, dest_id)
-            col_t2.info(f"Destination Balance: {dest_balance:,.2f} L")
+            col_t2.metric("Destination current",f"{dest_balance:,.2f} L")
         else:
             dest_id = None
-            col_t2.info("Destination Balance: 0.00 L")
+            col_t2.metric("Destination current","0.00 L")
 
         transfer_date = st.date_input("Transfer Date", key="transfer_date")
         transfer_liters = st.number_input("Transfer Liters", min_value=0.0, key="transfer_liters")
 
-        if st.button("Confirm Fuel Transfer", type="primary"):
+        if st.button("Post linked fuel transfer", type="primary",use_container_width=True):
             if not dest_truck:
-                st.error("❌ Cannot transfer fuel without a valid destination truck.")
+                st.error("Select a valid destination truck.")
             elif transfer_liters <= 0:
                 st.error("Please enter liters to transfer.")
             elif transfer_liters > source_balance:
-                st.error("❌ Source truck does not have enough inventory!")
+                st.error("The source truck does not have enough inventory.")
             else:
                 try:
                     source_tx_id, dest_tx_id, remaining_balance = create_safe_transfer(
                         conn, source_id, dest_id, transfer_date,
                         float(transfer_liters), active_user
                     )
-                    st.success(f"Successfully transferred {transfer_liters:,.2f} L! 🚛💨")
+                    st.success(f"{transfer_liters:,.2f} L transferred with a verified linked transaction pair.")
                 except Exception as e:
                     st.error(f"Error executing transfer: {e}")
 
@@ -440,10 +456,10 @@ def render_transactions(conn, cursor, truck_dict, truck_list):
     # TAB 3: MANAGE SUPPLIERS
     # ==========================================
     with tab3:
-        st.subheader("Manage Suppliers")
+        st.markdown('<div class="operations-intro"><div><b>Supplier quick register</b><span>Add a basic supplier for immediate fuel receipts. Use Supplier Master for compliance and commercial details.</span></div><div class="operations-badge">MASTER DATA</div></div>',unsafe_allow_html=True)
         with st.form("add_supplier_form", clear_on_submit=True):
             new_supplier = st.text_input("New Supplier Name").strip()
-            if st.form_submit_button("Add Supplier"):
+            if st.form_submit_button("Add supplier",type="primary",use_container_width=True):
                 if new_supplier:
                     try:
                         cursor.execute("INSERT INTO suppliers (name) VALUES (%s)", (new_supplier,))
@@ -458,7 +474,7 @@ def render_transactions(conn, cursor, truck_dict, truck_list):
     # TAB 4: VIEW, SUMMARY AND CONTROLLED HISTORY
     # ==========================================
     with tab4:
-        st.subheader("🧐 Historical Audit & Filter Engine")
+        st.markdown('<div class="operations-intro"><div><b>Transaction register</b><span>Analyse truck balances, search individual movements and route corrections through Transaction Control.</span></div><div class="operations-badge">TRACEABLE</div></div>',unsafe_allow_html=True)
 
         if user_role == "ADMIN":
             st.caption("Permanent deletion is disabled. Use Transaction Control for traceable corrections and reversals.")
@@ -496,12 +512,12 @@ def render_transactions(conn, cursor, truck_dict, truck_list):
 
             view_mode = st.radio(
                 "Select View Mode", 
-                ["📊 Summarized Fleet Totals", "📜 Detailed Transaction Records"], 
+                ["Fleet summary", "Detailed transactions"], 
                 horizontal=True
             )
 
-            if view_mode == "📊 Summarized Fleet Totals":
-                st.markdown("### 🚛 Total Fuel Summary by Truck")
+            if view_mode == "Fleet summary":
+                st.markdown("### Inventory position by truck")
                 
                 summary_df = history_df.groupby('truck').apply(
                     lambda g: pd.Series({
@@ -525,7 +541,7 @@ def render_transactions(conn, cursor, truck_dict, truck_list):
 
             else:
                 with st.container(border=True):
-                    st.markdown("⚡ **Filter Controls**")
+                    st.markdown("**Filter controls**")
                     col_f1, col_f2 = st.columns(2)
                     
                     min_date = history_df['date_parsed'].min().date()
@@ -595,7 +611,7 @@ def render_transactions(conn, cursor, truck_dict, truck_list):
                         export_df.to_excel(writer, index=False, sheet_name='Detailed Transactions')
                     
                     col_download.download_button(
-                        label="📥 Download Excel",
+                        label="Download transaction report",
                         data=buffer.getvalue(),
                         file_name=f"Transaction_Records_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -615,17 +631,17 @@ def render_transactions(conn, cursor, truck_dict, truck_list):
                 for _, item in filtered_df.iterrows():
                     col1, col2, col3, col4, col5, col6, col7 = st.columns([2, 3, 2, 3, 2, 2, 2])
                     col1.write(item["date"])
-                    col2.write(f"🚛 {item['truck']}")
+                    col2.write(item['truck'])
                     col3.write(f"**{item['liters']:,.2f} L**")
                     
                     partner_id = normalize_partner_id(item.get('transfer_partner_id'))
                     if partner_id is not None:
-                        ctx = f"🔄 Transfer ({'IN' if item['type']=='IN' else 'OUT'}) linked to TX-{partner_id}"
+                        ctx = f"Transfer ({'IN' if item['type']=='IN' else 'OUT'}) linked to TX-{partner_id}"
                     else:
-                        ctx = f"📥 Uplift [{item['supplier_name']}]" if item['type'] == 'IN' else "📤 Delivery"
+                        ctx = f"Fuel receipt [{item['supplier_name']}]" if item['type'] == 'IN' else "Fuel issue"
                     
                     col4.write(ctx)
-                    col5.write(f"👤 {item['created_by']}")
+                    col5.write(item['created_by'])
                     col6.write(f"`TX-{item['id']}`")
                     
                     edit_col, del_col = col7.columns(2)

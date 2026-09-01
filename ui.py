@@ -80,11 +80,19 @@ def apply_theme(company=None):
     .workspace-icon{{width:34px;height:34px;border-radius:10px;background:{primary}0D;color:{primary};display:flex;align-items:center;justify-content:center;font-size:1rem;margin-bottom:.7rem}}
     .workspace-title{{font-size:.94rem;font-weight:760;color:#101828}} .workspace-copy{{font-size:.76rem;color:#667085;line-height:1.42;margin-top:.32rem}}
     .panel{{background:white;border:1px solid var(--line);border-radius:17px;padding:20px;box-shadow:0 9px 25px rgba(16,24,40,.045)}}
+    .operations-intro{{display:flex;align-items:center;justify-content:space-between;gap:1rem;background:linear-gradient(120deg,#FFFFFF,#F8FAFC);border:1px solid var(--line);border-radius:16px;padding:16px 19px;margin:.2rem 0 1rem}}
+    .operations-intro b{{display:block;color:#101828;font-size:.92rem}} .operations-intro span{{color:#667085;font-size:.76rem}}
+    .operations-badge{{background:{primary}0E;color:{primary};border:1px solid {primary}25;border-radius:999px;padding:.45rem .75rem;font-size:.68rem;font-weight:800;letter-spacing:.07em;white-space:nowrap}}
+    .balance-panel{{display:grid;grid-template-columns:1.45fr 1fr 1fr;gap:1rem;background:linear-gradient(135deg,#101828,#1D2939);color:white;border-radius:16px;padding:18px 20px;margin:.8rem 0 1.1rem;box-shadow:0 14px 32px rgba(16,24,40,.16)}}
+    .balance-panel small{{display:block;color:#98A2B3;font-size:.65rem;font-weight:800;letter-spacing:.08em;text-transform:uppercase;margin-bottom:.28rem}} .balance-panel strong{{font-size:1.35rem;letter-spacing:-.03em}} .balance-panel span{{display:block;color:#D0D5DD;font-size:.78rem;margin-top:.25rem}}
+    .balance-panel .positive{{color:#6CE9A6}} .balance-panel .warning{{color:#FDB022}}
+    .form-section-title{{font-size:.72rem;color:#475467;font-weight:800;letter-spacing:.09em;text-transform:uppercase;margin:.4rem 0 .65rem}}
+    .history-heading{{display:flex;justify-content:space-between;align-items:center;margin:1.2rem 0 .6rem}} .history-heading b{{font-size:.95rem;color:#101828}} .history-heading span{{font-size:.7rem;color:#667085}}
     .queue-item{{display:flex;justify-content:space-between;align-items:center;background:#FCFCFD;border:1px solid var(--line);border-left:4px solid #F79009;border-radius:11px;padding:12px 13px;margin-bottom:.5rem}}
     .queue-item.critical{{border-left-color:#D92D20}} .queue-item span{{font-size:.75rem;color:#667085}} .queue-item strong{{font-size:.63rem;letter-spacing:.09em;color:#B54708}}
     .timeline-row{{display:flex;gap:.75rem;padding:.68rem .1rem;border-bottom:1px solid #F0F2F5}} .timeline-dot{{width:8px;height:8px;border-radius:50%;background:{primary};margin-top:.38rem;flex:none;box-shadow:0 0 0 4px {primary}12}}
     .timeline-row b{{display:block;font-size:.78rem}} .timeline-row span{{display:block;color:#475467;font-size:.74rem;line-height:1.35;max-height:2.1rem;overflow:hidden}} .timeline-row small{{color:#98A2B3;font-size:.65rem}}
-    @media(max-width:900px){{[data-testid="stSidebar"]{{min-width:255px;max-width:255px}}.block-container{{padding-left:1rem;padding-right:1rem}}.hero-title{{font-size:1.7rem}}.command-shell,.control-panel{{min-height:auto}}.page-head{{align-items:flex-start;flex-direction:column}}}}
+    @media(max-width:900px){{[data-testid="stSidebar"]{{min-width:255px;max-width:255px}}.block-container{{padding-left:1rem;padding-right:1rem}}.hero-title{{font-size:1.7rem}}.command-shell,.control-panel{{min-height:auto}}.page-head{{align-items:flex-start;flex-direction:column}}.balance-panel{{grid-template-columns:1fr}}}}
     </style>""", unsafe_allow_html=True)
 
 
