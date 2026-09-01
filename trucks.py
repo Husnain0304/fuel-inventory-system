@@ -150,20 +150,145 @@ def render_trucks(conn, cursor):
         if fleet.empty:
             st.info("No trucks have been registered.")
             return
-        show_inactive = st.toggle("Show inactive trucks", value=False)
-        view = fleet if show_inactive else fleet[fleet["operational_status"] != "INACTIVE"]
-        for _, row in view.iterrows():
-            capacity = float(row["capacity_liters"] or 0)
-            balance = float(row["balance"] or 0)
-            fill = balance / capacity if capacity else 0
-            minimum = float(row["minimum_stock_liters"] or 0)
-            status = "Critical" if minimum and balance <= minimum else ("Setup required" if not capacity else "Healthy")
-            with st.container(border=True):
-                title, stock, state, actions = st.columns([2.2,1.3,1.2,1])
-                title.markdown(f"### {row['truck']}")
-                title.caption(f"{row['product'] or 'No product'} · {row['operational_status'].title()}")
-                stock.metric("Current stock", f"{balance:,.2f} L")
-                state.metric("Fill level", f"{fill*100:,.1f}%", status)
-                st.progress(max(0.0,min(fill,1.0)), text=f"Capacity {capacity:,.0f} L · Available space {max(capacity-balance,0):,.0f} L")
-                if actions.button("Edit profile", key=f"edit_profile_{row['id']}", use_container_width=True):
-                    edit_truck(conn,row)
+        st.markdown("### Live fleet inventory")
+        st.caption("Search the complete fleet, compare stock positions and open one truck for detailed control.")
+
+        working = fleet.copy()
+        working["balance"] = pd.to_numeric(working["balance"], errors="coerce").fillna(0.0)
+        working["capacity_liters"] = pd.to_numeric(working["capacity_liters"], errors="coerce").fillna(0.0)
+        working["minimum_stock_liters"] = pd.to_numeric(working["minimum_stock_liters"], errors="coerce").fillna(0.0)
+        working["reorder_level_liters"] = pd.to_numeric(working["reorder_level_liters"], errors="coerce").fillna(0.0)
+        working["available_space"] = (working["capacity_liters"] - working["balance"]).clip(lower=0)
+        working["utilization"] = working.apply(
+            lambda item: item["balance"] / item["capacity_liters"] * 100 if item["capacity_liters"] > 0 else 0.0,
+            axis=1,
+        )
+
+        def stock_condition(item):
+            if item["capacity_liters"] <= 0:
+                return "SETUP REQUIRED"
+            if item["balance"] < 0:
+                return "NEGATIVE"
+            if item["minimum_stock_liters"] > 0 and item["balance"] <= item["minimum_stock_liters"]:
+                return "CRITICAL"
+            if item["reorder_level_liters"] > 0 and item["balance"] <= item["reorder_level_liters"]:
+                return "REORDER"
+            return "HEALTHY"
+
+        working["stock_condition"] = working.apply(stock_condition, axis=1)
+
+        search_col, status_col, condition_col, product_col = st.columns([2.2, 1.15, 1.15, 1.25])
+        search = search_col.text_input(
+            "Search truck",
+            placeholder="Type plate number, code or emirate…",
+            key="fleet_inventory_search",
+        ).strip()
+        status_options = ["All statuses"] + sorted(working["operational_status"].dropna().unique().tolist())
+        selected_status = status_col.selectbox("Operating status", status_options, key="fleet_status_filter")
+        condition_options = ["All stock levels", "CRITICAL", "REORDER", "HEALTHY", "NEGATIVE", "SETUP REQUIRED"]
+        selected_condition = condition_col.selectbox("Stock level", condition_options, key="fleet_condition_filter")
+        product_options = ["All products"] + sorted(working["product"].dropna().unique().tolist())
+        selected_product = product_col.selectbox("Product", product_options, key="fleet_product_filter")
+
+        view = working.copy()
+        if search:
+            normalized = " ".join(search.upper().split())
+            compact = normalized.replace(" ", "")
+            truck_text = view["truck"].fillna("").str.upper()
+            view = view[truck_text.str.contains(normalized, regex=False) |
+                        truck_text.str.replace(" ", "", regex=False).str.contains(compact, regex=False)]
+        if selected_status != "All statuses":
+            view = view[view["operational_status"] == selected_status]
+        if selected_condition != "All stock levels":
+            view = view[view["stock_condition"] == selected_condition]
+        if selected_product != "All products":
+            view = view[view["product"] == selected_product]
+
+        result_col, sort_col = st.columns([3, 1])
+        result_col.markdown(f"**{len(view):,} truck{'s' if len(view) != 1 else ''} found**")
+        sort_choice = sort_col.selectbox(
+            "Sort fleet",
+            ["Truck number", "Lowest stock first", "Highest stock first", "Highest utilization"],
+            label_visibility="collapsed",
+            key="fleet_sort",
+        )
+        if sort_choice == "Lowest stock first":
+            view = view.sort_values(["balance", "truck"])
+        elif sort_choice == "Highest stock first":
+            view = view.sort_values(["balance", "truck"], ascending=[False, True])
+        elif sort_choice == "Highest utilization":
+            view = view.sort_values(["utilization", "truck"], ascending=[False, True])
+        else:
+            view = view.sort_values("truck")
+
+        if view.empty:
+            st.warning("No trucks match the current search and filters.")
+            return
+
+        register = view[["truck", "product", "balance", "capacity_liters", "utilization",
+                         "available_space", "minimum_stock_liters", "reorder_level_liters",
+                         "stock_condition", "operational_status", "last_movement"]].rename(columns={
+            "truck": "Truck",
+            "product": "Product",
+            "balance": "On Hand",
+            "capacity_liters": "Capacity",
+            "utilization": "Fill %",
+            "available_space": "Available",
+            "minimum_stock_liters": "Minimum",
+            "reorder_level_liters": "Reorder At",
+            "stock_condition": "Stock Status",
+            "operational_status": "Operating Status",
+            "last_movement": "Last Movement",
+        })
+        st.dataframe(
+            register,
+            use_container_width=True,
+            hide_index=True,
+            height=min(520, 38 + len(register) * 35),
+            column_config={
+                "Truck": st.column_config.TextColumn("Truck", width="medium", pinned=True),
+                "Product": st.column_config.TextColumn("Product", width="small"),
+                "On Hand": st.column_config.NumberColumn("On Hand", format="%.2f L"),
+                "Capacity": st.column_config.NumberColumn("Capacity", format="%.0f L"),
+                "Fill %": st.column_config.ProgressColumn("Fill %", min_value=0, max_value=100, format="%.1f%%"),
+                "Available": st.column_config.NumberColumn("Available", format="%.0f L"),
+                "Minimum": st.column_config.NumberColumn("Minimum", format="%.0f L"),
+                "Reorder At": st.column_config.NumberColumn("Reorder At", format="%.0f L"),
+                "Last Movement": st.column_config.DateColumn("Last Movement", format="DD MMM YYYY"),
+            },
+        )
+
+        st.markdown("#### Truck inspector")
+        selected_truck = st.selectbox(
+            "Select a truck for full details",
+            view["truck"].tolist(),
+            key="fleet_inspector_truck",
+        )
+        row = view[view["truck"] == selected_truck].iloc[0]
+        balance = float(row["balance"])
+        capacity = float(row["capacity_liters"])
+        utilization = float(row["utilization"])
+        available = float(row["available_space"])
+
+        with st.container(border=True):
+            heading, profile_action, ledger_action = st.columns([3.2, 1, 1])
+            heading.markdown(f"### {row['truck']}")
+            heading.caption(f"{row['product'] or 'Product not assigned'} · {row['operational_status'].title()} · {row['stock_condition'].title()}")
+            if profile_action.button("Edit profile", key=f"edit_profile_{row['id']}", use_container_width=True):
+                edit_truck(conn, row)
+            if ledger_action.button("Open ledger", key=f"open_ledger_{row['id']}", use_container_width=True, type="primary"):
+                st.session_state["ledger_truck"] = row["truck"]
+                st.session_state["navigation_target"] = "Truck Ledger"
+                st.rerun()
+
+            detail_columns = st.columns(6)
+            detail_columns[0].metric("On hand", f"{balance:,.2f} L")
+            detail_columns[1].metric("Capacity", f"{capacity:,.0f} L")
+            detail_columns[2].metric("Available", f"{available:,.0f} L")
+            detail_columns[3].metric("Utilization", f"{utilization:,.1f}%")
+            detail_columns[4].metric("Reorder at", f"{float(row['reorder_level_liters']):,.0f} L")
+            detail_columns[5].metric("Minimum", f"{float(row['minimum_stock_liters']):,.0f} L")
+            last_movement = row["last_movement"] if pd.notna(row["last_movement"]) else "No movements"
+            st.progress(max(0.0, min(utilization / 100, 1.0)), text=f"{row['stock_condition'].title()} · Last movement: {last_movement}")
+            if row["notes"]:
+                st.caption(f"Notes: {row['notes']}")

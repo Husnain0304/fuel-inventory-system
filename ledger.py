@@ -16,7 +16,9 @@ def render_ledger(conn, truck_dict, truck_list):
 
     col1, col2, col3 = st.columns([3,2,2])
 
-    selected_truck = col1.selectbox("Select Truck", truck_list)
+    requested_truck = st.session_state.pop("ledger_truck", None)
+    initial_index = truck_list.index(requested_truck) if requested_truck in truck_list else 0
+    selected_truck = col1.selectbox("Select Truck", truck_list, index=initial_index)
     from_date = col2.date_input("From Date")
     to_date = col3.date_input("To Date")
 
