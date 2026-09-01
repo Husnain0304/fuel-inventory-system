@@ -3,7 +3,7 @@ import streamlit as st
 
 from auth import logout, require_login, require_role
 from branding import get_company_profile
-from bulk_upload import render_bulk_upload
+from historical_import import render_historical_import
 from dashboard import render_dashboard
 from database import get_connection, init_db
 from ledger import render_ledger
@@ -188,8 +188,8 @@ elif page == "Ledger":
     page_header("Truck Ledger", "Trace every movement and running balance by vehicle.")
     render_ledger(conn, truck_dict, truck_list)
 elif page == "Bulk Upload":
-    page_header("Integration Inbox", "Validate external delivery data before it changes inventory.")
-    render_bulk_upload(conn, cursor, truck_dict, truck_list)
+    page_header("Integration Inbox", "Reconcile historical and current outbound delivery files before inventory changes.")
+    render_historical_import(conn)
 elif page == "Refill Approvals":
     render_approval_centre(conn)
 elif page == "Notifications":
