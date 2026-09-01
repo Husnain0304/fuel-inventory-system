@@ -3,6 +3,7 @@ import pandas as pd
 import streamlit as st
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill
+from openpyxl.utils import get_column_letter
 from ui import page_header
 
 CHECKS={
@@ -31,7 +32,7 @@ def _xlsx(data,company):
  for row in data.where(pd.notna(data),None).itertuples(index=False,name=None): ws.append(list(row))
  for c in ws[2]: c.fill=PatternFill("solid",fgColor="111827"); c.font=Font(color="FFFFFF",bold=True)
  ws.freeze_panes="A3"; ws.auto_filter.ref=ws.dimensions
- for col in ws.columns: ws.column_dimensions[col[0].column_letter].width=min(max(14,max(len(str(x.value or '')) for x in col)+2),38)
+ for column_index,col in enumerate(ws.columns,1): ws.column_dimensions[get_column_letter(column_index)].width=min(max(14,max(len(str(x.value or '')) for x in col)+2),38)
  out=BytesIO(); wb.save(out); return out.getvalue()
 
 def render_inventory_health(conn):

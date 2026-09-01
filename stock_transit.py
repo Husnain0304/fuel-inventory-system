@@ -5,6 +5,7 @@ import pandas as pd
 import streamlit as st
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill
+from openpyxl.utils import get_column_letter
 
 from audit import record_event
 from period_close import assert_period_open
@@ -52,7 +53,8 @@ def _report(data,company):
     for row in data.where(pd.notna(data),None).itertuples(index=False,name=None): ws.append([str(v) if isinstance(v,pd.Timestamp) else v for v in row])
     for c in ws[2]: c.fill=PatternFill("solid",fgColor="111827"); c.font=Font(color="FFFFFF",bold=True)
     ws.freeze_panes="A3"; ws.auto_filter.ref=ws.dimensions
-    for col in ws.columns: ws.column_dimensions[col[0].column_letter].width=min(max(14,max(len(str(v.value or "")) for v in col)+2),32)
+    for column_index,col in enumerate(ws.columns,1):
+        ws.column_dimensions[get_column_letter(column_index)].width=min(max(14,max(len(str(v.value or "")) for v in col)+2),32)
     out=BytesIO(); wb.save(out); return out.getvalue()
 
 
