@@ -50,11 +50,19 @@ def apply_theme(company=None):
     .stButton>button[kind="primary"]{{background:linear-gradient(135deg,{primary},#A92626);border-color:{primary};color:white;box-shadow:0 7px 18px {primary}35}}
     [data-testid="stMetric"]{{background:linear-gradient(145deg,#FFFFFF,#FBFCFD);border:1px solid var(--line);border-radius:16px;padding:18px 20px;box-shadow:0 10px 28px rgba(16,24,40,.055)}}
     [data-testid="stMetricLabel"]{{color:#667085;font-weight:650}} [data-testid="stMetricValue"]{{color:#101828;font-weight:760;letter-spacing:-.04em}}
-    [data-testid="stForm"]{{background:#FFFFFF;border:1px solid var(--line);border-radius:16px;padding:1.2rem;box-shadow:0 8px 24px rgba(16,24,40,.045)}}
-    [data-baseweb="input"]>div,[data-baseweb="select"]>div,[data-baseweb="textarea"]>div{{border-radius:10px!important;border-color:#D0D5DD!important;background:#FCFCFD!important}}
-    [data-baseweb="tab-list"]{{gap:.35rem;background:#EAECF0;padding:.28rem;border-radius:12px}}
-    [data-baseweb="tab"]{{border-radius:9px;padding:.6rem .9rem;border:0}}
-    [aria-selected="true"][data-baseweb="tab"]{{background:white;color:{primary};box-shadow:0 2px 7px rgba(16,24,40,.09)}}
+    [data-testid="stForm"]{{position:relative;background:linear-gradient(145deg,#FFFFFF,#FBFCFD);border:1px solid #D8DDE5;border-radius:19px;padding:1.35rem;box-shadow:0 14px 38px rgba(16,24,40,.075)}}
+    [data-testid="stForm"]:before{{content:"";position:absolute;left:0;top:18px;bottom:18px;width:4px;border-radius:0 4px 4px 0;background:linear-gradient(180deg,{primary},#D64848)}}
+    .stTextInput input,.stNumberInput input,.stDateInput input,.stTimeInput input,.stTextArea textarea{{background:#F8FAFC!important;border:1px solid #C9D0DA!important;border-radius:11px!important;box-shadow:inset 0 1px 2px rgba(16,24,40,.035)!important;color:#101828!important}}
+    .stTextInput input:focus,.stNumberInput input:focus,.stDateInput input:focus,.stTimeInput input:focus,.stTextArea textarea:focus{{background:#FFFFFF!important;border-color:{primary}!important;box-shadow:0 0 0 3px {primary}14!important}}
+    [data-baseweb="select"]>div{{background:#F8FAFC!important;border:1px solid #C9D0DA!important;border-radius:11px!important;box-shadow:inset 0 1px 2px rgba(16,24,40,.035)!important}}
+    [data-baseweb="select"]>div:focus-within{{background:#FFFFFF!important;border-color:{primary}!important;box-shadow:0 0 0 3px {primary}14!important}}
+    [data-testid="stTabs"] [role="tablist"]{{display:flex!important;gap:.42rem!important;background:linear-gradient(135deg,#101828,#1D2939)!important;border:1px solid #344054!important;padding:.42rem!important;border-radius:15px!important;box-shadow:0 12px 28px rgba(16,24,40,.16)!important;margin-bottom:1rem!important;overflow-x:auto!important}}
+    [data-testid="stTabs"] [role="tab"]{{flex:0 0 auto!important;border-radius:10px!important;padding:.67rem 1rem!important;border:1px solid transparent!important;color:#C8D0DC!important;font-size:.77rem!important;font-weight:720!important;letter-spacing:.01em!important;background:transparent!important;transition:.16s ease!important;min-height:2.55rem!important}}
+    [data-testid="stTabs"] [role="tab"]:hover{{background:#FFFFFF0D!important;border-color:#FFFFFF17!important;color:#FFFFFF!important}}
+    [data-testid="stTabs"] [role="tab"][aria-selected="true"]{{background:linear-gradient(135deg,{primary},#B62D2D)!important;border-color:#D95A5A!important;color:#FFFFFF!important;box-shadow:0 7px 18px {primary}55!important}}
+    [data-testid="stTabs"] [role="tab"]>div{{color:inherit!important}}
+    [data-testid="stTabs"] [data-baseweb="tab-highlight"]{{display:none!important}}
+    [data-testid="stTabs"] [role="tabpanel"]{{background:linear-gradient(145deg,#FFFFFF 0%,#FCFDFE 100%);border:1px solid #DDE2E9;border-radius:18px;padding:1.35rem 1.45rem;box-shadow:0 16px 42px rgba(16,24,40,.065);min-height:180px}}
     div[data-testid="stDataFrame"]{{border:1px solid var(--line);border-radius:14px;overflow:hidden;box-shadow:0 7px 22px rgba(16,24,40,.04)}}
     [data-testid="stAlert"]{{border-radius:12px;border-width:1px}}
     hr{{border-color:var(--line)!important;margin:1.2rem 0!important}}
