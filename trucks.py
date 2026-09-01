@@ -23,7 +23,7 @@ def _inventory(conn):
     """, conn)
 
 
-@st.dialog("Truck inventory details", width="large")
+@st.dialog("Truck inventory details")
 def edit_truck(conn, truck):
     products = pd.read_sql_query("SELECT id,name FROM products WHERE active=TRUE ORDER BY name", conn)
     product_map = dict(zip(products["name"], products["id"]))
@@ -42,21 +42,19 @@ def edit_truck(conn, truck):
     condition = "Critical" if minimum_now and balance <= minimum_now else ("Reorder" if reorder_now and balance <= reorder_now else ("Setup required" if not capacity_now else "Healthy"))
 
     st.markdown(
-        f'<div style="background:linear-gradient(135deg,#101828,#1D2939);color:white;border-radius:16px;padding:18px 20px;margin-bottom:1rem">'
-        f'<div style="font-size:.65rem;color:#98A2B3;font-weight:800;letter-spacing:.1em;text-transform:uppercase">Fleet inventory asset</div>'
-        f'<div style="display:flex;justify-content:space-between;gap:1rem;align-items:center;margin-top:.3rem"><div style="font-size:1.45rem;font-weight:800">{escape(str(truck["truck"]))}</div>'
-        f'<div style="background:#FFFFFF16;border:1px solid #FFFFFF22;border-radius:999px;padding:.38rem .65rem;font-size:.65rem;font-weight:800">{escape(condition.upper())}</div></div>'
-        f'<div style="color:#D0D5DD;font-size:.76rem;margin-top:.25rem">{escape(str(current_product))} · {escape(str(truck["operational_status"]).title())}</div></div>',
+        f'<div style="background:linear-gradient(135deg,#101828,#1D2939);color:white;border-radius:14px;padding:13px 15px;margin-bottom:.65rem">'
+        f'<div style="display:flex;justify-content:space-between;gap:.7rem;align-items:center"><div><div style="font-size:1.15rem;font-weight:800">{escape(str(truck["truck"]))}</div>'
+        f'<div style="color:#B8C1D1;font-size:.66rem;margin-top:.1rem">{escape(str(current_product))} · {escape(str(truck["operational_status"]).title())}</div></div>'
+        f'<div style="background:#FFFFFF16;border:1px solid #FFFFFF22;border-radius:999px;padding:.3rem .5rem;font-size:.57rem;font-weight:850">{escape(condition.upper())}</div></div></div>'
+        f'<div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:.35rem;margin-bottom:.55rem">'
+        f'<div style="background:#FFF;border:1px solid #E4E7EC;border-radius:10px;padding:.55rem"><small style="display:block;color:#98A2B3;font-size:.52rem;font-weight:800;text-transform:uppercase">Inventory</small><b style="font-size:.78rem;color:#101828">{balance:,.0f} L</b></div>'
+        f'<div style="background:#FFF;border:1px solid #E4E7EC;border-radius:10px;padding:.55rem"><small style="display:block;color:#98A2B3;font-size:.52rem;font-weight:800;text-transform:uppercase">Capacity</small><b style="font-size:.78rem;color:#101828">{capacity_now:,.0f} L</b></div>'
+        f'<div style="background:#FFF;border:1px solid #E4E7EC;border-radius:10px;padding:.55rem"><small style="display:block;color:#98A2B3;font-size:.52rem;font-weight:800;text-transform:uppercase">Available</small><b style="font-size:.78rem;color:#101828">{available_now:,.0f} L</b></div>'
+        f'<div style="background:#FFF;border:1px solid #E4E7EC;border-radius:10px;padding:.55rem"><small style="display:block;color:#98A2B3;font-size:.52rem;font-weight:800;text-transform:uppercase">Fill level</small><b style="font-size:.78rem;color:#101828">{utilization_now:,.1f}%</b></div></div>',
         unsafe_allow_html=True,
     )
-    summary = st.columns(4)
-    summary[0].metric("Live inventory", f"{balance:,.2f} L")
-    summary[1].metric("Capacity", f"{capacity_now:,.0f} L")
-    summary[2].metric("Available", f"{available_now:,.0f} L")
-    summary[3].metric("Utilization", f"{utilization_now:,.1f}%")
-    st.progress(max(0.0, min(utilization_now / 100, 1.0)), text=f"Current tank utilization · {condition}")
-    st.markdown("#### Inventory controls")
-    st.caption("Update the truck profile below. Saving changes creates an audit record; it does not post an inventory movement.")
+    st.progress(max(0.0, min(utilization_now / 100, 1.0)), text=f"Tank utilization · {condition}")
+    st.markdown("**Inventory controls**")
     with st.form(f"edit_truck_{truck['id']}"):
         c1, c2 = st.columns(2)
         product = c1.selectbox("Fuel product", list(product_map), index=list(product_map).index(current_product))
@@ -67,7 +65,7 @@ def edit_truck(conn, truck):
         minimum = c2.number_input("Minimum safe stock (L)", min_value=0.0, value=float(truck["minimum_stock_liters"] or 0), step=100.0)
         reorder = c1.number_input("Reorder level (L)", min_value=0.0, value=float(truck["reorder_level_liters"] or 0), step=100.0)
         price = c2.number_input("Custom selling price", min_value=0.0, value=float(truck["selling_price_per_liter"] or 0), format="%.3f")
-        notes = st.text_area("Notes", value=str(truck["notes"] or ""))
+        notes = st.text_area("Notes", value=str(truck["notes"] or ""), height=70)
         if st.form_submit_button("Save changes", type="primary", use_container_width=True):
             if capacity and float(truck["balance"]) > capacity:
                 st.error(f"Capacity cannot be below the current stock of {truck['balance']:,.2f} L.")
