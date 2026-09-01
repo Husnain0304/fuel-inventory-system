@@ -24,7 +24,10 @@ def apply_theme(company=None):
     html,body,[class*="css"]{{font-family:Inter,ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}}
     .stApp{{background:radial-gradient(circle at 88% 0%,{primary}0A 0,transparent 24rem),var(--canvas);color:var(--ink)}}
     [data-testid="stHeader"]{{background:rgba(243,245,248,.88);backdrop-filter:blur(10px);border-bottom:1px solid rgba(228,231,236,.8)}}
-    [data-testid="stSidebar"]{{background:linear-gradient(180deg,#111827 0%,#0B1220 55%,#080D18 100%);border-right:1px solid #263244;min-width:292px;max-width:292px}}
+    [data-testid="stSidebar"]{{background:linear-gradient(180deg,#111827 0%,#0B1220 55%,#080D18 100%);border-right:1px solid #263244;transition:width .22s ease,min-width .22s ease,max-width .22s ease,transform .22s ease}}
+    [data-testid="stSidebar"][aria-expanded="true"]{{width:292px!important;min-width:292px!important;max-width:292px!important}}
+    [data-testid="stSidebar"][aria-expanded="false"]{{width:0!important;min-width:0!important;max-width:0!important;border-right:0!important;overflow:hidden!important}}
+    [data-testid="stSidebarCollapsedControl"],[data-testid="collapsedControl"]{{position:fixed!important;left:.7rem!important;top:.55rem!important;z-index:100000!important;margin:0!important;transform:none!important}}
     [data-testid="stSidebar"]>div:first-child{{padding:1rem .8rem 1.2rem}}
     [data-testid="stSidebar"] *{{color:#F8FAFC}}
     [data-testid="stSidebar"] [data-testid="stExpander"]{{border:0;background:transparent}}
@@ -39,7 +42,7 @@ def apply_theme(company=None):
     .sidebar-brand{{background:#FFFFFF0A;border:1px solid #FFFFFF12;border-radius:16px;padding:12px;margin-bottom:.7rem}}
     .sidebar-product{{font-size:.67rem;color:#98A2B3;letter-spacing:.11em;text-transform:uppercase;font-weight:800;margin-top:.55rem}}
     .sidebar-tagline{{font-size:.71rem;color:#667085;line-height:1.35;margin-top:.15rem}}
-    .block-container{{padding-top:1.05rem;padding-bottom:3.5rem;max-width:1500px}}
+    .block-container{{padding-top:1.05rem;padding-bottom:3.5rem;max-width:none!important;width:100%!important}}
     h1,h2,h3{{color:var(--ink);letter-spacing:-.035em;font-weight:750}} h2{{font-size:1.35rem}} h3{{font-size:1.06rem}}
     p,.stCaption{{color:var(--muted)}}
     .stButton>button,.stDownloadButton>button{{border-radius:10px;font-weight:680;min-height:2.55rem;border:1px solid #D0D5DD;transition:.16s ease;box-shadow:0 1px 2px rgba(16,24,40,.04)}}
@@ -99,7 +102,7 @@ def apply_theme(company=None):
     .queue-item.critical{{border-left-color:#D92D20}} .queue-item span{{font-size:.75rem;color:#667085}} .queue-item strong{{font-size:.63rem;letter-spacing:.09em;color:#B54708}}
     .timeline-row{{display:flex;gap:.75rem;padding:.68rem .1rem;border-bottom:1px solid #F0F2F5}} .timeline-dot{{width:8px;height:8px;border-radius:50%;background:{primary};margin-top:.38rem;flex:none;box-shadow:0 0 0 4px {primary}12}}
     .timeline-row b{{display:block;font-size:.78rem}} .timeline-row span{{display:block;color:#475467;font-size:.74rem;line-height:1.35;max-height:2.1rem;overflow:hidden}} .timeline-row small{{color:#98A2B3;font-size:.65rem}}
-    @media(max-width:900px){{[data-testid="stSidebar"]{{min-width:255px;max-width:255px}}.block-container{{padding-left:1rem;padding-right:1rem}}.hero-title{{font-size:1.7rem}}.command-shell,.control-panel{{min-height:auto}}.page-head{{align-items:flex-start;flex-direction:column}}.balance-panel{{grid-template-columns:1fr}}}}
+    @media(max-width:900px){{[data-testid="stSidebar"][aria-expanded="true"]{{width:255px!important;min-width:255px!important;max-width:255px!important}}.block-container{{padding-left:1rem;padding-right:1rem}}.hero-title{{font-size:1.7rem}}.command-shell,.control-panel{{min-height:auto}}.page-head{{align-items:flex-start;flex-direction:column}}.balance-panel{{grid-template-columns:1fr}}}}
     </style>""", unsafe_allow_html=True)
 
 
