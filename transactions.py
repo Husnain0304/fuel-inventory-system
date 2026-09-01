@@ -269,13 +269,23 @@ def render_transactions(conn, cursor, truck_dict, truck_list):
     metric_columns[3].metric("Issued today",f"{float(summary.today_out):,.0f} L")
     st.markdown('<div class="operations-intro"><div><b>Movement workspace</b><span>Choose a workflow below. Every posted movement immediately updates the truck ledger and audit trail.</span></div><div class="operations-badge">LIVE CONTROL</div></div>',unsafe_allow_html=True)
 
-    tab1, tab2, tab3, tab4, tab5 = st.tabs([
-        "Record movement", 
-        "Truck transfer", 
-        "Suppliers", 
-        "Transaction history", 
-        "Audit trail"
-    ])
+    workspace_definitions=[
+        ("MOVEMENT","01","Record movement","Receive or issue fuel"),
+        ("TRANSFER","02","Truck transfer","Move linked inventory"),
+        ("HISTORY","03","Transaction register","Search and analyse"),
+        ("SUPPLIERS","04","Supplier access","Quick master data"),
+        ("AUDIT","05","Control timeline","Review user activity"),
+    ]
+    if "fuel_workspace" not in st.session_state: st.session_state["fuel_workspace"]="MOVEMENT"
+    st.markdown('<div class="workflow-rail"><div class="workflow-rail-title">Choose an operational workspace</div></div>',unsafe_allow_html=True)
+    workspace_columns=st.columns(5,gap="small")
+    for column,(code,number,title,description) in zip(workspace_columns,workspace_definitions):
+        active=st.session_state["fuel_workspace"]==code
+        with column:
+            st.markdown(f'<div class="workflow-tile {"active" if active else ""}"><div class="workflow-number">{number}</div><div class="workflow-name">{title}</div><div class="workflow-description">{description}</div></div>',unsafe_allow_html=True)
+            if st.button("Selected" if active else "Open workspace",key=f"fuel_workspace_{code}",use_container_width=True,type="primary" if active else "secondary"):
+                st.session_state["fuel_workspace"]=code; st.rerun()
+    workspace=st.session_state["fuel_workspace"]
 
     active_user = st.session_state.get("user", "Admin_User")
     user_role = st.session_state.get("role", "USER")
@@ -283,7 +293,7 @@ def render_transactions(conn, cursor, truck_dict, truck_list):
     # ==========================================
     # TAB 1: ADD ENTRY (UPLIFT / DELIVERY)
     # ==========================================
-    with tab1:
+    if workspace=="MOVEMENT":
         st.markdown('<div class="form-section-title">1 · Select movement direction</div>',unsafe_allow_html=True)
         mode = st.radio("Movement direction", ["Fuel IN · Receive into truck", "Fuel OUT · Issue from truck"], horizontal=True,label_visibility="collapsed")
         st.markdown('<div class="form-section-title">2 · Select inventory asset</div>',unsafe_allow_html=True)
@@ -407,7 +417,7 @@ def render_transactions(conn, cursor, truck_dict, truck_list):
     # ==========================================
     # TAB 2: TRUCK TO TRUCK TRANSFER
     # ==========================================
-    with tab2:
+    if workspace=="TRANSFER":
         st.markdown('<div class="operations-intro"><div><b>Controlled truck-to-truck transfer</b><span>The system posts a linked OUT and IN pair in one database transaction.</span></div><div class="operations-badge">DUAL ENTRY</div></div>',unsafe_allow_html=True)
         col_t1, col_t2 = st.columns(2)
         
@@ -455,7 +465,7 @@ def render_transactions(conn, cursor, truck_dict, truck_list):
     # ==========================================
     # TAB 3: MANAGE SUPPLIERS
     # ==========================================
-    with tab3:
+    if workspace=="SUPPLIERS":
         st.markdown('<div class="operations-intro"><div><b>Supplier quick register</b><span>Add a basic supplier for immediate fuel receipts. Use Supplier Master for compliance and commercial details.</span></div><div class="operations-badge">MASTER DATA</div></div>',unsafe_allow_html=True)
         with st.form("add_supplier_form", clear_on_submit=True):
             new_supplier = st.text_input("New Supplier Name").strip()
@@ -473,7 +483,7 @@ def render_transactions(conn, cursor, truck_dict, truck_list):
     # ==========================================
     # TAB 4: VIEW, SUMMARY AND CONTROLLED HISTORY
     # ==========================================
-    with tab4:
+    if workspace=="HISTORY":
         st.markdown('<div class="operations-intro"><div><b>Transaction register</b><span>Analyse truck balances, search individual movements and route corrections through Transaction Control.</span></div><div class="operations-badge">TRACEABLE</div></div>',unsafe_allow_html=True)
 
         if user_role == "ADMIN":
@@ -657,8 +667,8 @@ def render_transactions(conn, cursor, truck_dict, truck_list):
     # ==========================================
     # TAB 5: SYSTEM AUDIT LOG VIEWER
     # ==========================================
-    with tab5:
-        st.subheader("📋 Complete System Activity History")
+    if workspace=="AUDIT":
+        st.markdown('<div class="operations-intro"><div><b>Control timeline</b><span>Review the latest user actions recorded by the inventory audit trail.</span></div><div class="operations-badge">500 EVENTS</div></div>',unsafe_allow_html=True)
         logs_df = pd.read_sql_query('SELECT timestamp AS "Date & Time", "user" AS "User", action AS "Action" FROM audit_log ORDER BY id DESC LIMIT 500', conn)
         if logs_df.empty:
             st.info("No actions logged.")

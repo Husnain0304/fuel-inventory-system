@@ -83,6 +83,13 @@ def apply_theme(company=None):
     .operations-intro{{display:flex;align-items:center;justify-content:space-between;gap:1rem;background:linear-gradient(120deg,#FFFFFF,#F8FAFC);border:1px solid var(--line);border-radius:16px;padding:16px 19px;margin:.2rem 0 1rem}}
     .operations-intro b{{display:block;color:#101828;font-size:.92rem}} .operations-intro span{{color:#667085;font-size:.76rem}}
     .operations-badge{{background:{primary}0E;color:{primary};border:1px solid {primary}25;border-radius:999px;padding:.45rem .75rem;font-size:.68rem;font-weight:800;letter-spacing:.07em;white-space:nowrap}}
+    .workflow-rail{{background:#101828;border:1px solid #344054;border-radius:18px;padding:15px 16px 10px;margin:.8rem 0 1.2rem;box-shadow:0 16px 36px rgba(16,24,40,.16)}}
+    .workflow-rail-title{{color:#98A2B3;font-size:.64rem;font-weight:850;letter-spacing:.12em;text-transform:uppercase;margin:0 0 .7rem .15rem}}
+    .workflow-tile{{position:relative;background:#1D2939;border:1px solid #344054;border-radius:13px 13px 0 0;padding:13px 13px 10px;min-height:89px;overflow:hidden}}
+    .workflow-tile.active{{background:linear-gradient(135deg,{primary},#B82C2C);border-color:#E36B6B;box-shadow:0 9px 24px {primary}42}}
+    .workflow-number{{font-size:.62rem;color:#98A2B3;font-weight:850;letter-spacing:.1em}} .workflow-tile.active .workflow-number{{color:#FFFFFFB8}}
+    .workflow-name{{font-size:.84rem;color:#F9FAFB;font-weight:760;margin-top:.35rem}} .workflow-description{{font-size:.66rem;color:#98A2B3;line-height:1.3;margin-top:.22rem}} .workflow-tile.active .workflow-description{{color:#FFFFFFC9}}
+    .workspace-canvas{{background:linear-gradient(145deg,#FFFFFF,#FBFCFD);border:1px solid var(--line);border-radius:18px;padding:20px 22px;margin-top:.35rem;box-shadow:0 12px 32px rgba(16,24,40,.055)}}
     .balance-panel{{display:grid;grid-template-columns:1.45fr 1fr 1fr;gap:1rem;background:linear-gradient(135deg,#101828,#1D2939);color:white;border-radius:16px;padding:18px 20px;margin:.8rem 0 1.1rem;box-shadow:0 14px 32px rgba(16,24,40,.16)}}
     .balance-panel small{{display:block;color:#98A2B3;font-size:.65rem;font-weight:800;letter-spacing:.08em;text-transform:uppercase;margin-bottom:.28rem}} .balance-panel strong{{font-size:1.35rem;letter-spacing:-.03em}} .balance-panel span{{display:block;color:#D0D5DD;font-size:.78rem;margin-top:.25rem}}
     .balance-panel .positive{{color:#6CE9A6}} .balance-panel .warning{{color:#FDB022}}
