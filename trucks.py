@@ -1,4 +1,5 @@
 from datetime import date
+from html import escape
 
 import pandas as pd
 import streamlit as st
@@ -225,38 +226,62 @@ def render_trucks(conn, cursor):
             st.warning("No trucks match the current search and filters.")
             return
 
-        register = view[["truck", "product", "balance", "capacity_liters", "utilization",
-                         "available_space", "minimum_stock_liters", "reorder_level_liters",
-                         "stock_condition", "operational_status", "last_movement"]].rename(columns={
-            "truck": "Truck",
-            "product": "Product",
-            "balance": "On Hand",
-            "capacity_liters": "Capacity",
-            "utilization": "Fill %",
-            "available_space": "Available",
-            "minimum_stock_liters": "Minimum",
-            "reorder_level_liters": "Reorder At",
-            "stock_condition": "Stock Status",
-            "operational_status": "Operating Status",
-            "last_movement": "Last Movement",
-        })
-        st.dataframe(
-            register,
-            use_container_width=True,
-            hide_index=True,
-            height=min(520, 38 + len(register) * 35),
-            column_config={
-                "Truck": st.column_config.TextColumn("Truck", width="medium", pinned=True),
-                "Product": st.column_config.TextColumn("Product", width="small"),
-                "On Hand": st.column_config.NumberColumn("On Hand", format="%.2f L"),
-                "Capacity": st.column_config.NumberColumn("Capacity", format="%.0f L"),
-                "Fill %": st.column_config.ProgressColumn("Fill %", min_value=0, max_value=100, format="%.1f%%"),
-                "Available": st.column_config.NumberColumn("Available", format="%.0f L"),
-                "Minimum": st.column_config.NumberColumn("Minimum", format="%.0f L"),
-                "Reorder At": st.column_config.NumberColumn("Reorder At", format="%.0f L"),
-                "Last Movement": st.column_config.DateColumn("Last Movement", format="DD MMM YYYY"),
-            },
-        )
+        st.markdown("""
+        <style>
+        .fleet-card{background:linear-gradient(145deg,#FFFFFF,#FAFBFC);border:1px solid #E4E7EC;border-radius:17px 17px 8px 8px;padding:17px 18px 14px;min-height:224px;box-shadow:0 9px 25px rgba(16,24,40,.055);position:relative;overflow:hidden;transition:.16s ease}
+        .fleet-card:hover{border-color:#C7CDD6;box-shadow:0 15px 34px rgba(16,24,40,.10);transform:translateY(-2px)}
+        .fleet-card:after{content:"";position:absolute;width:100px;height:100px;border-radius:50%;right:-52px;top:-52px;background:#8C1C1C0B}
+        .fleet-top{display:flex;justify-content:space-between;align-items:flex-start;gap:.55rem}
+        .fleet-number{font-size:1.02rem;font-weight:790;color:#101828;letter-spacing:-.025em}.fleet-product{font-size:.69rem;color:#667085;margin-top:.18rem}
+        .fleet-badge{font-size:.58rem;font-weight:850;letter-spacing:.07em;padding:.32rem .48rem;border-radius:999px;white-space:nowrap}
+        .fleet-badge.healthy{background:#ECFDF3;color:#027A48}.fleet-badge.reorder{background:#FFFAEB;color:#B54708}.fleet-badge.critical,.fleet-badge.negative{background:#FEF3F2;color:#B42318}.fleet-badge.setup-required{background:#F2F4F7;color:#475467}
+        .fleet-balance-label{font-size:.6rem;color:#667085;font-weight:800;letter-spacing:.09em;text-transform:uppercase;margin-top:1rem}.fleet-balance{font-size:1.62rem;color:#101828;font-weight:800;letter-spacing:-.045em;margin-top:.08rem}.fleet-balance small{font-size:.72rem;color:#667085;font-weight:700;letter-spacing:0}
+        .tank-track{height:8px;border-radius:999px;background:#EAECF0;overflow:hidden;margin:.75rem 0 .32rem}.tank-fill{height:100%;border-radius:999px;background:linear-gradient(90deg,#8C1C1C,#C43A3A)}
+        .tank-caption{display:flex;justify-content:space-between;color:#667085;font-size:.62rem}
+        .fleet-facts{display:grid;grid-template-columns:1fr 1fr 1fr;gap:.45rem;border-top:1px solid #EAECF0;margin-top:.85rem;padding-top:.72rem}.fleet-facts span{display:block;color:#98A2B3;font-size:.55rem;text-transform:uppercase;font-weight:800;letter-spacing:.05em}.fleet-facts b{display:block;color:#344054;font-size:.72rem;margin-top:.13rem}
+        </style>
+        """, unsafe_allow_html=True)
+
+        page_size = 9
+        page_count = max(1, (len(view) + page_size - 1) // page_size)
+        current_page = min(max(int(st.session_state.get("fleet_gallery_page", 1)), 1), page_count)
+        st.session_state["fleet_gallery_page"] = current_page
+        page_start = (current_page - 1) * page_size
+        gallery = view.iloc[page_start:page_start + page_size]
+
+        for row_start in range(0, len(gallery), 3):
+            card_columns = st.columns(3)
+            for card_column, (_, card) in zip(card_columns, gallery.iloc[row_start:row_start + 3].iterrows()):
+                condition = str(card["stock_condition"])
+                badge_class = condition.lower().replace(" ", "-")
+                utilization = float(card["utilization"])
+                bar_width = max(0.0, min(utilization, 100.0))
+                last_movement = pd.to_datetime(card["last_movement"]).strftime("%d %b %Y") if pd.notna(card["last_movement"]) else "No activity"
+                with card_column:
+                    st.markdown(
+                        f'<div class="fleet-card"><div class="fleet-top"><div><div class="fleet-number">{escape(str(card["truck"]))}</div>'
+                        f'<div class="fleet-product">{escape(str(card["product"] or "Product not assigned"))} · {escape(str(card["operational_status"]).title())}</div></div>'
+                        f'<span class="fleet-badge {badge_class}">{escape(condition)}</span></div>'
+                        f'<div class="fleet-balance-label">Live inventory</div><div class="fleet-balance">{float(card["balance"]):,.2f} <small>L</small></div>'
+                        f'<div class="tank-track"><div class="tank-fill" style="width:{bar_width:.1f}%"></div></div>'
+                        f'<div class="tank-caption"><span>{utilization:.1f}% full</span><span>{float(card["capacity_liters"]):,.0f} L capacity</span></div>'
+                        f'<div class="fleet-facts"><div><span>Available</span><b>{float(card["available_space"]):,.0f} L</b></div>'
+                        f'<div><span>Reorder at</span><b>{float(card["reorder_level_liters"]):,.0f} L</b></div>'
+                        f'<div><span>Last movement</span><b>{escape(last_movement)}</b></div></div></div>',
+                        unsafe_allow_html=True,
+                    )
+                    if st.button("View truck", key=f"view_fleet_card_{int(card['id'])}", use_container_width=True):
+                        st.session_state["fleet_inspector_truck"] = card["truck"]
+                        st.rerun()
+
+        page_left, page_status, page_right = st.columns([1, 3, 1])
+        if page_left.button("← Previous", disabled=current_page <= 1, use_container_width=True, key="fleet_previous_page"):
+            st.session_state["fleet_gallery_page"] = current_page - 1
+            st.rerun()
+        page_status.markdown(f"<div style='text-align:center;color:#667085;padding:.7rem'>Page <b>{current_page}</b> of <b>{page_count}</b> · showing {page_start + 1}–{min(page_start + page_size, len(view))} of {len(view)}</div>", unsafe_allow_html=True)
+        if page_right.button("Next →", disabled=current_page >= page_count, use_container_width=True, key="fleet_next_page"):
+            st.session_state["fleet_gallery_page"] = current_page + 1
+            st.rerun()
 
         st.markdown("#### Truck inspector")
         selected_truck = st.selectbox(
