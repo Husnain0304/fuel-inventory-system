@@ -30,6 +30,9 @@ def apply_theme(company=None):
     [data-testid="stSidebar"] [data-testid="stExpander"]{{border:0;background:transparent}}
     [data-testid="stSidebar"] [data-testid="stExpander"] details{{border:0}}
     [data-testid="stSidebar"] [data-testid="stExpander"] summary{{font-size:.69rem;font-weight:800;letter-spacing:.09em;text-transform:uppercase;color:#98A2B3;padding:.7rem .35rem .35rem}}
+    [data-testid="stSidebar"] [data-testid="stExpander"] details[open]>summary{{background:linear-gradient(90deg,{primary}38,#1D2939 72%);color:#FFFFFF!important;border:1px solid {primary}72;border-left:4px solid {primary};border-radius:10px;padding:.68rem .72rem;margin:.2rem 0 .45rem;box-shadow:0 7px 18px rgba(0,0,0,.16)}}
+    [data-testid="stSidebar"] [data-testid="stExpander"] details[open]>summary *{{color:#FFFFFF!important;fill:#FFFFFF!important}}
+    [data-testid="stSidebar"] [data-testid="stExpander"] details:not([open])>summary:hover{{background:#FFFFFF0B;color:#FFFFFF;border-radius:9px}}
     [data-testid="stSidebar"] .stButton>button{{justify-content:flex-start;text-align:left;background:transparent;border:1px solid transparent;color:#D7DEE9;box-shadow:none;min-height:2.25rem;padding:.42rem .65rem}}
     [data-testid="stSidebar"] .stButton>button:hover{{background:#FFFFFF0D;border-color:#FFFFFF16;color:white;transform:none}}
     [data-testid="stSidebar"] .stButton>button[kind="primary"]{{background:linear-gradient(135deg,{primary},#B52B2B);border-color:#D95C5C;color:white;box-shadow:0 8px 22px {primary}50}}
