@@ -4,7 +4,7 @@ from numbers import Number
 import pandas as pd
 import streamlit as st
 
-from branding import DEFAULT_PROFILE, logo_file
+from branding import DEFAULT_PROFILE
 
 INK = "#172033"
 RED = "#8C1C1C"
@@ -136,9 +136,11 @@ def apply_theme(company=None):
     [data-testid="stSidebar"] .stButton>button{{justify-content:flex-start;text-align:left;background:transparent;border:1px solid transparent;color:#D7DEE9;box-shadow:none;min-height:2.25rem;padding:.42rem .65rem}}
     [data-testid="stSidebar"] .stButton>button:hover{{background:#FFFFFF0D;border-color:#FFFFFF16;color:white;transform:none}}
     [data-testid="stSidebar"] .stButton>button[kind="primary"]{{background:linear-gradient(135deg,{primary},#B52B2B);border-color:#D95C5C;color:white;box-shadow:0 8px 22px {primary}50}}
-    .sidebar-brand{{background:#FFFFFF0A;border:1px solid #FFFFFF12;border-radius:16px;padding:12px;margin-bottom:.7rem}}
-    .sidebar-product{{font-size:.67rem;color:#98A2B3;letter-spacing:.11em;text-transform:uppercase;font-weight:800;margin-top:.55rem}}
-    .sidebar-tagline{{font-size:.71rem;color:#667085;line-height:1.35;margin-top:.15rem}}
+    .sidebar-brand{{display:flex;align-items:center;justify-content:space-between;gap:.7rem;background:linear-gradient(135deg,#1D2939,#151D2B);border:1px solid #344054;border-left:4px solid {primary};border-radius:13px;padding:12px 14px;margin:.15rem .05rem .8rem;box-shadow:0 9px 22px rgba(0,0,0,.18)}}
+    .sidebar-name{{font-size:1rem;color:#FFFFFF;font-weight:820;letter-spacing:.045em;text-transform:uppercase;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}}
+    .sidebar-mark{{width:8px;height:8px;border-radius:50%;background:{primary};box-shadow:0 0 0 5px {primary}24;flex:none}}
+    .sidebar-product{{font-size:.65rem;color:#98A2B3;letter-spacing:.1em;text-transform:uppercase;font-weight:800;margin:.2rem .35rem 0}}
+    .sidebar-tagline{{font-size:.69rem;color:#667085;line-height:1.35;margin:.18rem .35rem .75rem}}
     .block-container{{padding-top:1.05rem;padding-bottom:3.5rem;max-width:none!important;width:100%!important}}
     h1,h2,h3{{color:var(--ink);letter-spacing:-.035em;font-weight:750}} h2{{font-size:1.35rem}} h3{{font-size:1.06rem}}
     p,.stCaption{{color:var(--muted)}}
@@ -229,12 +231,14 @@ def apply_theme(company=None):
 
 def render_sidebar_brand(company=None):
     company = company or profile()
-    logo = logo_file(company)
-    st.sidebar.markdown('<div class="sidebar-brand">',unsafe_allow_html=True)
-    if logo: st.sidebar.image(str(logo), width=168)
-    else: st.sidebar.markdown(f"### {escape(company['company_name'])}")
-    st.sidebar.markdown(f'<div class="sidebar-product">{escape(company.get("application_name","Fuel Inventory Control"))}</div><div class="sidebar-tagline">{escape(company.get("tagline", "Controlled inventory intelligence"))}</div>',unsafe_allow_html=True)
-    st.sidebar.markdown('</div>',unsafe_allow_html=True)
+    company_name = escape(str(company.get("company_name", "Company")))
+    application_name = escape(str(company.get("application_name", "Fuel Inventory Control")))
+    tagline = escape(str(company.get("tagline", "Controlled inventory intelligence")))
+    st.sidebar.markdown(
+        f'<div class="sidebar-brand"><div class="sidebar-name">{company_name}</div><span class="sidebar-mark"></span></div>'
+        f'<div class="sidebar-product">{application_name}</div><div class="sidebar-tagline">{tagline}</div>',
+        unsafe_allow_html=True,
+    )
 
 
 def page_header(title, subtitle):
