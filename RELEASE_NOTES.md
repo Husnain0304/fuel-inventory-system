@@ -33,3 +33,12 @@ This is the consolidated Foundation V2 inventory release. It manages fuel invent
 ## Upgrade behavior
 
 Existing inventory and history remain in place. New tables and columns are created automatically on first start. Use the test branch, database backup, acceptance test and rollback package supplied with the release.
+# V6 — Historical outbound reconciliation
+
+- Replaced the legacy outbound upload route with a reconciliation-first Integration Inbox.
+- Supports mixed historical and current delivery files without reposting exact matches.
+- Uses ticket-first matching, with date/truck/liters fallback for older records.
+- Fills a missing ticket only when one unique existing transaction matches.
+- Blocks conflicts, ambiguous matches, spreadsheet duplicates, closed periods and insufficient stock.
+- Provides a downloadable reconciliation report and import batch history.
+- Posts all safe changes atomically with audit and record-event entries.

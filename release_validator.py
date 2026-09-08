@@ -6,7 +6,7 @@ import sys
 
 ROOT = Path(__file__).resolve().parent
 EXCLUDED = {"approvals.py", "notifications.py", "reports.py", "utils.py", "release_validator.py"}
-REQUIRED = {"app.py", "database.py", "schema_bootstrap.py", "inventory_health.py", "storage_control.py", "stock_transit.py", "receipt_costing.py", "END_TO_END_TEST_GUIDE.md", "DEPLOYMENT_GUIDE.md", "ROLLBACK_GUIDE.md"}
+REQUIRED = {"app.py", "database.py", "schema_bootstrap.py", "inventory_health.py", "storage_control.py", "stock_transit.py", "receipt_costing.py", "historical_import.py", "END_TO_END_TEST_GUIDE.md", "DEPLOYMENT_GUIDE.md", "ROLLBACK_GUIDE.md"}
 FORBIDDEN = ("DELETE FROM transactions", "WIPE ALL TRANSACTION", "Bulk Delete Operations")
 
 def main() -> int:

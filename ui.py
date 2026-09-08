@@ -1,5 +1,7 @@
 from html import escape
+from numbers import Number
 
+import pandas as pd
 import streamlit as st
 
 from branding import DEFAULT_PROFILE, logo_file
@@ -7,6 +9,101 @@ from branding import DEFAULT_PROFILE, logo_file
 INK = "#172033"
 RED = "#8C1C1C"
 GREEN = "#0B8F55"
+
+
+def _display_label(column, config):
+    setting = config.get(column) if isinstance(config, dict) else None
+    if isinstance(setting, str):
+        return setting
+    if isinstance(setting, dict) and setting.get("label"):
+        return setting["label"]
+    return str(column).replace("_", " ").strip().title()
+
+
+def _display_value(value):
+    if value is None or (not isinstance(value, (list, dict)) and pd.isna(value)):
+        return "—"
+    if isinstance(value, bool):
+        return "Yes" if value else "No"
+    if isinstance(value, pd.Timestamp):
+        return value.strftime("%d %b %Y · %H:%M") if value.hour or value.minute else value.strftime("%d %b %Y")
+    if hasattr(value, "strftime") and not isinstance(value, str):
+        try:
+            return value.strftime("%d %b %Y")
+        except Exception:
+            pass
+    if isinstance(value, Number):
+        return f"{float(value):,.2f}" if not float(value).is_integer() else f"{int(value):,}"
+    return str(value)
+
+
+def _install_premium_dataframes():
+    """Render read-only data as separated record rows instead of spreadsheet grids."""
+    if not hasattr(st, "_fillit_original_dataframe"):
+        st._fillit_original_dataframe = st.dataframe
+    if getattr(st, "_fillit_premium_dataframe_active", False):
+        return
+
+    def premium_dataframe(data=None, *args, **kwargs):
+        try:
+            source = data.data if hasattr(data, "data") and data.__class__.__name__ == "Styler" else data
+            frame = pd.DataFrame(source).copy()
+        except Exception:
+            return st._fillit_original_dataframe(data, *args, **kwargs)
+
+        config = kwargs.get("column_config") or {}
+        column_order = kwargs.get("column_order")
+        columns = list(column_order) if column_order else list(frame.columns)
+        columns = [column for column in columns if column in frame.columns and not (isinstance(config, dict) and column in config and config[column] is None)]
+        if not columns:
+            st.info("No display columns are available.")
+            return None
+        if frame.empty:
+            st.markdown('<div class="premium-empty-records">No records available</div>', unsafe_allow_html=True)
+            return None
+
+        maximum_rows = 300
+        visible = frame[columns].head(maximum_rows)
+        minimum_width = max(720, len(columns) * 145)
+        requested_height = kwargs.get("height")
+        scroll_height = min(max(int(requested_height or 440), 180), 620)
+        labels = [_display_label(column, config) for column in columns]
+        template = f"repeat({len(columns)}, minmax(125px, 1fr))"
+        header = "".join(f'<div class="premium-record-head-cell">{escape(str(label))}</div>' for label in labels)
+        rows = []
+        progress_words = ("share", "relative", "utilization", "fill %", "fill_percent")
+        status_words = ("active", "available", "healthy", "approved", "completed", "posted", "closed", "pass", "pending", "warning", "critical", "rejected", "inactive", "quarantined", "failed", "error", "open")
+        for _, record in visible.iterrows():
+            cells = []
+            for column, label in zip(columns, labels):
+                value = record[column]
+                normalized_column = str(column).lower()
+                if any(word in normalized_column for word in progress_words) and isinstance(value, Number) and pd.notna(value):
+                    percentage = float(value) * 100 if abs(float(value)) <= 1 else float(value)
+                    percentage = max(0.0, min(percentage, 100.0))
+                    content = f'<div class="premium-mini-track"><span style="width:{percentage:.1f}%"></span></div><small>{percentage:.1f}%</small>'
+                else:
+                    shown = _display_value(value)
+                    lowered = shown.lower()
+                    status_class = ""
+                    if lowered in status_words or any(lowered.startswith(word + " ") for word in status_words):
+                        status_class = " status-danger" if any(word in lowered for word in ("critical", "rejected", "failed", "error", "quarantined")) else (" status-warn" if any(word in lowered for word in ("pending", "warning", "open")) else " status-good")
+                    content = f'<span class="premium-cell-value{status_class}" title="{escape(shown)}">{escape(shown)}</span>'
+                cells.append(f'<div class="premium-record-cell"><span class="premium-mobile-label">{escape(str(label))}</span>{content}</div>')
+            rows.append(f'<div class="premium-record-row" style="grid-template-columns:{template}">{"".join(cells)}</div>')
+
+        st.markdown(
+            f'<div class="premium-record-window" style="max-height:{scroll_height}px">'
+            f'<div class="premium-record-inner" style="min-width:{minimum_width}px">'
+            f'<div class="premium-record-head" style="grid-template-columns:{template}">{header}</div>{"".join(rows)}</div></div>',
+            unsafe_allow_html=True,
+        )
+        if len(frame) > maximum_rows:
+            st.caption(f"Showing the first {maximum_rows:,} of {len(frame):,} records. Use the page filters or download the complete report for all records.")
+        return None
+
+    st.dataframe = premium_dataframe
+    st._fillit_premium_dataframe_active = True
 
 
 def profile():
@@ -53,7 +150,10 @@ def apply_theme(company=None):
     [data-testid="stForm"]{{position:relative;background:linear-gradient(145deg,#FFFFFF,#FBFCFD);border:1px solid #D8DDE5;border-radius:19px;padding:1.35rem;box-shadow:0 14px 38px rgba(16,24,40,.075)}}
     [data-testid="stForm"]:before{{content:"";position:absolute;left:0;top:18px;bottom:18px;width:4px;border-radius:0 4px 4px 0;background:linear-gradient(180deg,{primary},#D64848)}}
     .stTextInput input,.stNumberInput input,.stDateInput input,.stTimeInput input,.stTextArea textarea{{background:#F8FAFC!important;border:1px solid #C9D0DA!important;border-radius:11px!important;box-shadow:inset 0 1px 2px rgba(16,24,40,.035)!important;color:#101828!important}}
+    .stDateInput [data-baseweb="input"],.stTimeInput [data-baseweb="input"]{{background:#F8FAFC!important;border:1px solid #C9D0DA!important;border-radius:11px!important;box-shadow:inset 0 1px 2px rgba(16,24,40,.035)!important;overflow:hidden!important}}
+    .stDateInput [data-baseweb="input"]>div,.stTimeInput [data-baseweb="input"]>div{{background:transparent!important;border:0!important}}
     .stTextInput input:focus,.stNumberInput input:focus,.stDateInput input:focus,.stTimeInput input:focus,.stTextArea textarea:focus{{background:#FFFFFF!important;border-color:{primary}!important;box-shadow:0 0 0 3px {primary}14!important}}
+    .stDateInput [data-baseweb="input"]:focus-within,.stTimeInput [data-baseweb="input"]:focus-within{{background:#FFFFFF!important;border-color:{primary}!important;box-shadow:0 0 0 3px {primary}14!important}}
     [data-baseweb="select"]>div{{background:#F8FAFC!important;border:1px solid #C9D0DA!important;border-radius:11px!important;box-shadow:inset 0 1px 2px rgba(16,24,40,.035)!important}}
     [data-baseweb="select"]>div:focus-within{{background:#FFFFFF!important;border-color:{primary}!important;box-shadow:0 0 0 3px {primary}14!important}}
     [data-testid="stTabs"] [role="tablist"]{{display:flex!important;gap:.42rem!important;background:linear-gradient(135deg,#101828,#1D2939)!important;border:1px solid #344054!important;padding:.42rem!important;border-radius:15px!important;box-shadow:0 12px 28px rgba(16,24,40,.16)!important;margin-bottom:1rem!important;overflow-x:auto!important}}
@@ -64,6 +164,18 @@ def apply_theme(company=None):
     [data-testid="stTabs"] [data-baseweb="tab-highlight"]{{display:none!important}}
     [data-testid="stTabs"] [role="tabpanel"]{{background:linear-gradient(145deg,#FFFFFF 0%,#FCFDFE 100%);border:1px solid #DDE2E9;border-radius:18px;padding:1.35rem 1.45rem;box-shadow:0 16px 42px rgba(16,24,40,.065);min-height:180px}}
     div[data-testid="stDataFrame"]{{border:1px solid var(--line);border-radius:14px;overflow:hidden;box-shadow:0 7px 22px rgba(16,24,40,.04)}}
+    .premium-record-window{{overflow:auto;background:linear-gradient(145deg,#F8FAFC,#F2F4F7);border:1px solid #D7DDE5;border-radius:17px;padding:.55rem;box-shadow:0 12px 30px rgba(16,24,40,.065);scrollbar-color:#98A2B3 transparent}}
+    .premium-record-head{{display:grid;position:sticky;top:0;z-index:3;background:linear-gradient(135deg,#101828,#1D2939);border:1px solid #344054;border-radius:11px;padding:.72rem .25rem;box-shadow:0 7px 16px rgba(16,24,40,.14)}}
+    .premium-record-head-cell{{padding:0 .65rem;color:#D0D5DD;font-size:.59rem;font-weight:850;letter-spacing:.075em;text-transform:uppercase;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}}
+    .premium-record-row{{display:grid;align-items:center;background:#FFFFFF;border:1px solid #E1E5EB;border-left:4px solid transparent;border-radius:11px;margin:.43rem .08rem 0;padding:.68rem .25rem;box-shadow:0 3px 10px rgba(16,24,40,.035);transition:.14s ease}}
+    .premium-record-row:hover{{border-color:#C7CDD6;border-left-color:{primary};box-shadow:0 8px 20px rgba(16,24,40,.075);transform:translateY(-1px)}}
+    .premium-record-cell{{min-width:0;padding:0 .65rem;color:#344054;font-size:.73rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}}
+    .premium-record-cell:first-child{{font-weight:780;color:#101828}}.premium-mobile-label{{display:none}}
+    .premium-cell-value{{display:inline-block;max-width:100%;overflow:hidden;text-overflow:ellipsis;vertical-align:middle}}
+    .premium-cell-value.status-good,.premium-cell-value.status-warn,.premium-cell-value.status-danger{{border-radius:999px;padding:.28rem .48rem;font-size:.59rem;font-weight:850;letter-spacing:.035em;text-transform:uppercase}}
+    .premium-cell-value.status-good{{background:#ECFDF3;color:#027A48}}.premium-cell-value.status-warn{{background:#FFFAEB;color:#B54708}}.premium-cell-value.status-danger{{background:#FEF3F2;color:#B42318}}
+    .premium-mini-track{{display:inline-block;width:72%;height:7px;background:#EAECF0;border-radius:999px;overflow:hidden;margin-right:.4rem;vertical-align:middle}}.premium-mini-track span{{display:block;height:100%;border-radius:999px;background:linear-gradient(90deg,{primary},#CE4141)}}.premium-record-cell small{{color:#667085;font-size:.62rem}}
+    .premium-empty-records{{background:#F8FAFC;border:1px dashed #C9D0DA;border-radius:14px;color:#667085;padding:1.3rem;text-align:center}}
     [data-testid="stAlert"]{{border-radius:12px;border-width:1px}}
     hr{{border-color:var(--line)!important;margin:1.2rem 0!important}}
     .page-head{{position:relative;overflow:hidden;display:flex;justify-content:space-between;align-items:center;gap:1rem;background:linear-gradient(120deg,#FFFFFF 0%,#FFFFFF 70%,{primary}08 100%);border:1px solid var(--line);padding:22px 25px;border-radius:18px;margin-bottom:1.2rem;box-shadow:0 10px 30px rgba(16,24,40,.055)}}
@@ -112,6 +224,7 @@ def apply_theme(company=None):
     .timeline-row b{{display:block;font-size:.78rem}} .timeline-row span{{display:block;color:#475467;font-size:.74rem;line-height:1.35;max-height:2.1rem;overflow:hidden}} .timeline-row small{{color:#98A2B3;font-size:.65rem}}
     @media(max-width:900px){{[data-testid="stSidebar"][aria-expanded="true"]{{width:255px!important;min-width:255px!important;max-width:255px!important}}.block-container{{padding-left:1rem;padding-right:1rem}}.hero-title{{font-size:1.7rem}}.command-shell,.control-panel{{min-height:auto}}.page-head{{align-items:flex-start;flex-direction:column}}.balance-panel{{grid-template-columns:1fr}}}}
     </style>""", unsafe_allow_html=True)
+    _install_premium_dataframes()
 
 
 def render_sidebar_brand(company=None):
