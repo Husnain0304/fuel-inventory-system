@@ -290,6 +290,11 @@ def init_db(_conn) -> bool:
             "ALTER TABLE trucks ADD COLUMN IF NOT EXISTS notes TEXT",
             "ALTER TABLE trucks ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP",
             "ALTER TABLE users ADD COLUMN IF NOT EXISTS active BOOLEAN NOT NULL DEFAULT TRUE",
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS email TEXT",
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS phone_number TEXT",
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS must_change_password BOOLEAN NOT NULL DEFAULT FALSE",
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS invitation_sent_at TIMESTAMPTZ",
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS password_changed_at TIMESTAMPTZ",
         )
         for statement in migrations:
             cursor.execute(statement)
@@ -312,6 +317,7 @@ def init_db(_conn) -> bool:
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_audit_log_id_desc ON audit_log(id DESC)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_refill_status ON refill_requests(status, id DESC)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_login_sessions_token ON login_sessions(token_hash, expires_at)")
+        cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email_unique ON users(LOWER(email)) WHERE email IS NOT NULL")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_audit_events_time ON audit_events(occurred_at DESC)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_audit_events_entity ON audit_events(entity_type, entity_id)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_audit_events_user ON audit_events(username, occurred_at DESC)")
