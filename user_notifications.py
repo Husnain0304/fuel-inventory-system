@@ -1,6 +1,7 @@
 import pandas as pd
 import streamlit as st
 
+from rbac import can
 from ui import page_header
 
 
@@ -44,8 +45,13 @@ def notify_user(conn, username, title, message, notification_type="INFO", source
 
 def notify_approval_team(conn, title, message, source_type=None, source_id=None, created_by="System"):
     cursor = conn.cursor()
-    cursor.execute("""SELECT username FROM users
-        WHERE role IN ('ADMIN','INVENTORY_MANAGER','APPROVER') AND LOWER(username)<>LOWER(%s)""", (created_by,))
+    cursor.execute("""SELECT DISTINCT u.username FROM users u
+        WHERE COALESCE(u.active,TRUE)=TRUE AND LOWER(u.username)<>LOWER(%s)
+          AND (u.role='ADMIN' OR (
+            (EXISTS(SELECT 1 FROM security_role_actions rp WHERE rp.role_code=u.role AND rp.action_name='APPROVE')
+             OR EXISTS(SELECT 1 FROM security_user_overrides up WHERE up.user_id=u.id AND up.permission_type='ACTION' AND up.permission_name='APPROVE' AND up.effect='ALLOW'))
+            AND NOT EXISTS(SELECT 1 FROM security_user_overrides dp WHERE dp.user_id=u.id AND dp.permission_type='ACTION' AND dp.permission_name='APPROVE' AND dp.effect='DENY')
+          ))""", (created_by,))
     recipients = [row[0] for row in cursor.fetchall()]
     notification_id = None
     for username in recipients:
@@ -89,7 +95,7 @@ def add_request_message(conn,request_id,message_type,message,created_by):
 def _audience():
     role = st.session_state.get("role", "VIEWER")
     username = st.session_state.get("user", "")
-    return username, role in ("ADMIN", "INVENTORY_MANAGER", "APPROVER")
+    return username, can(role, "APPROVE")
 
 
 def unread_count(conn):

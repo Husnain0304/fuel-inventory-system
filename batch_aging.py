@@ -6,6 +6,7 @@ from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill
 
 from audit import record_event
+from rbac import can
 from ui import page_header
 
 
@@ -75,7 +76,7 @@ def render_batch_aging(conn):
             FROM tank_transactions x JOIN storage_tanks t ON t.id=x.tank_id JOIN depots d ON d.id=t.depot_id LEFT JOIN products p ON p.id=x.product_id
             LEFT JOIN batch_issue_allocations a ON a.tank_transaction_id=x.id WHERE x.type='OUT' AND a.id IS NULL ORDER BY x.id DESC""",conn)
         if issues.empty: st.success("Every storage issue is allocated to a batch.")
-        elif role not in EDIT_ROLES: st.dataframe(issues,use_container_width=True,hide_index=True)
+        elif not can(role,"EDIT_BATCH"): st.dataframe(issues,use_container_width=True,hide_index=True)
         else:
             labels={f"STX-{int(r.id)} · {r.depot}/{r.tank} · {r.product} · {float(r.liters):,.2f} L":r for r in issues.itertuples()}; choice=st.selectbox("Unallocated storage issue",list(labels)); issue=labels[choice]
             eligible=position[(position.status.eq("RELEASED"))&(position.product.eq(issue.product))&(position.available_liters>0)&(~position.aging_status.eq("EXPIRED"))]
@@ -92,7 +93,7 @@ def render_batch_aging(conn):
     allocations=pd.read_sql_query("""SELECT a.id,a.created_at,x.id tank_transaction_id,b.batch_number,p.name product,a.allocated_liters,a.allocation_method,a.exception_reason,a.created_by FROM batch_issue_allocations a JOIN fuel_batches b ON b.id=a.batch_id JOIN products p ON p.id=b.product_id JOIN tank_transactions x ON x.id=a.tank_transaction_id ORDER BY a.id DESC""",conn)
     with history: st.dataframe(allocations,use_container_width=True,hide_index=True,height=450)
     with configuration:
-        if role in {"ADMIN","INVENTORY_MANAGER"}:
+        if can(role,"EDIT_BATCH"):
             with st.form("aging_settings"):
                 warning=st.number_input("Expiry warning days",min_value=1,max_value=365,value=int(settings.expiry_warning_days)); critical=st.number_input("Critical warning days",min_value=1,max_value=180,value=int(settings.critical_warning_days)); save=st.form_submit_button("Save aging limits",type="primary")
             if save:

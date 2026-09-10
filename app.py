@@ -11,7 +11,7 @@ from reconciliation import render_reconciliation
 from procurement import render_procurement
 from forecasting import render_forecasting
 from master_reports import render_master_reports
-from rbac import allowed_pages, ensure_rbac_schema
+from rbac import allowed_pages, ensure_rbac_schema, load_effective_permissions
 from settings import render_settings
 from storage import render_storage
 from storage_operations import render_storage_operations
@@ -55,6 +55,7 @@ company = get_company_profile(conn)
 st.session_state["company_profile"] = company
 apply_theme(company)
 require_login(conn)
+load_effective_permissions(conn)
 if not st.session_state.get("approval_escalation_checked"):
     process_approval_escalations(conn)
     st.session_state["approval_escalation_checked"] = True

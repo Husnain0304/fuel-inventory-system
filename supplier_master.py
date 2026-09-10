@@ -4,6 +4,7 @@ import pandas as pd
 import streamlit as st
 
 from audit import record_event
+from rbac import can
 from ui import page_header
 
 
@@ -63,7 +64,7 @@ def ensure_supplier_master_schema(conn):
 
 
 def _can_manage():
-    return st.session_state.get("role","VIEWER") in MANAGE_ROLES
+    return can(st.session_state.get("role","VIEWER"), "MANAGE_SUPPLIERS")
 
 
 def _suppliers(conn):

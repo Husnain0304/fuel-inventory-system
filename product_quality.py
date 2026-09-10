@@ -7,6 +7,7 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 
 from audit import record_event
+from rbac import can
 from ui import page_header
 
 
@@ -119,7 +120,7 @@ def render_product_quality(conn):
             if search: view=view[view.astype(str).agg(" ".join,axis=1).str.contains(search,case=False,na=False)]
             st.dataframe(view,use_container_width=True,hide_index=True,height=430)
     with create:
-        if role not in OPERATING_ROLES: st.info("Your role has view-only access.")
+        if not can(role,"MANAGE_QUALITY"): st.info("Your role has view-only access.")
         elif not supplier_map or not product_map: st.warning("Create an active supplier and product first.")
         else:
             with st.form("create_quality_batch"):
@@ -148,7 +149,7 @@ def render_product_quality(conn):
             unlinked=eligible[eligible.batch_id.isna()]
             st.caption("This action adds traceability only. It never changes the posted receipt quantity or tank balance.")
             if unlinked.empty: st.success("All supplier receipts are linked to batches.")
-            elif role not in OPERATING_ROLES: st.dataframe(unlinked,use_container_width=True,hide_index=True)
+            elif not can(role,"MANAGE_QUALITY"): st.dataframe(unlinked,use_container_width=True,hide_index=True)
             else:
                 receipt_labels={f"STX-{int(r.id)} · {r.supplier} · {r.product} · {float(r.accepted_liters):,.2f} L":r for r in unlinked.itertuples()}
                 selected=st.selectbox("Unlinked supplier receipt",list(receipt_labels)); row=receipt_labels[selected]
@@ -164,7 +165,7 @@ def render_product_quality(conn):
     with inspect:
         available=batches[batches.status.isin(["DRAFT","QUARANTINE"])]
         if available.empty: st.info("No draft or quarantined batch is waiting for inspection.")
-        elif role not in OPERATING_ROLES: st.info("Your role has view-only access.")
+        elif not can(role,"MANAGE_QUALITY"): st.info("Your role has view-only access.")
         else:
             choices={f"FB-{int(r.id)} · {r.batch_number} · {r.product}":int(r.id) for r in available.itertuples()}; label=st.selectbox("Batch to inspect",list(choices)); batch_id=choices[label]
             batch_row=available[available.id==batch_id].iloc[0]
@@ -186,7 +187,7 @@ def render_product_quality(conn):
     with decision:
         pending=batches[batches.status.isin(["DRAFT","QUARANTINE","RELEASED"])]
         if pending.empty: st.info("No batch is waiting for a decision.")
-        elif role not in DECISION_ROLES: st.info("Only an authorized approver can release, quarantine or reject a batch.")
+        elif not can(role,"DECIDE_QUALITY"): st.info("Only an authorized approver can release, quarantine or reject a batch.")
         else:
             choices={f"FB-{int(r.id)} · {r.batch_number} · {r.status}":int(r.id) for r in pending.itertuples()}; label=st.selectbox("Batch",list(choices),key="decision_batch"); batch_id=choices[label]
             latest=_latest_inspection(conn,batch_id)
@@ -204,7 +205,7 @@ def render_product_quality(conn):
     with specs_tab:
         specs=pd.read_sql_query("""SELECT q.id,p.name product,q.effective_from,q.density_min,q.density_max,q.temperature_max,q.water_max_ppm,q.sulfur_max_ppm,q.flash_point_min,q.active,q.created_by,q.created_at FROM product_quality_specs q JOIN products p ON p.id=q.product_id ORDER BY q.id DESC""",conn)
         st.dataframe(specs,use_container_width=True,hide_index=True)
-        if role in {"ADMIN","INVENTORY_MANAGER"} and product_map:
+        if can(role,"MANAGE_QUALITY") and product_map:
             with st.expander("Create a new active specification"):
                 with st.form("quality_spec"):
                     product=st.selectbox("Product",list(product_map),key="spec_product"); effective=st.date_input("Effective from",date.today())

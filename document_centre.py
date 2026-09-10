@@ -6,6 +6,7 @@ import pandas as pd
 import streamlit as st
 
 from audit import record_event
+from rbac import can
 from ui import page_header
 
 
@@ -80,11 +81,11 @@ def ensure_document_schema(conn):
 
 
 def _can_manage():
-    return st.session_state.get("role", "VIEWER") in MANAGE_ROLES
+    return can(st.session_state.get("role", "VIEWER"), "MANAGE_DOCUMENTS")
 
 
 def _can_read(confidentiality):
-    return confidentiality != "RESTRICTED" or st.session_state.get("role", "VIEWER") in RESTRICTED_ROLES
+    return confidentiality != "RESTRICTED" or can(st.session_state.get("role", "VIEWER"), "VIEW_RESTRICTED_DOCUMENTS")
 
 
 def _validate_link(conn, link_label, record_id):
@@ -184,7 +185,7 @@ def _render_register(conn, documents):
     if link: view=view[view["entity_type"].isin(link)]
     if search.strip(): view=view[view.astype(str).agg(" ".join,axis=1).str.contains(search.strip(),case=False,na=False)]
     role=st.session_state.get("role","VIEWER")
-    if role not in RESTRICTED_ROLES:
+    if not can(role, "VIEW_RESTRICTED_DOCUMENTS"):
         allowed_rows=view["confidentiality"].astype(str).ne("RESTRICTED")
         view=view.loc[allowed_rows].copy()
     register_columns=["status","document_number","title","category","document_date","external_reference",
@@ -221,7 +222,7 @@ def render_document_centre(conn):
             x,y=st.columns(2); title=x.text_input("Document title"); category=y.selectbox("Category",DOCUMENT_CATEGORIES)
             x,y=st.columns(2); document_date=x.date_input("Document date",date.today()); reference=y.text_input("External reference / invoice number")
             x,y=st.columns(2); link_label=x.selectbox("Link document to",list(LINK_TYPES)); entity_id=y.number_input("Record ID",min_value=0,step=1,help="Example: enter 125 for TX-125. Leave 0 only for General / Unlinked.")
-            confidentiality_options=["INTERNAL","RESTRICTED"] if st.session_state.get("role") in RESTRICTED_ROLES else ["INTERNAL"]
+            confidentiality_options=["INTERNAL","RESTRICTED"] if can(st.session_state.get("role", "VIEWER"), "VIEW_RESTRICTED_DOCUMENTS") else ["INTERNAL"]
             x,y=st.columns(2); supplier=x.selectbox("Supplier",list(supplier_options)); confidentiality=y.selectbox("Confidentiality",confidentiality_options)
             description=st.text_area("Description"); uploaded=st.file_uploader("Supporting file",type=sorted(ALLOWED_EXTENSIONS),key="new_evidence_file"); submit=st.form_submit_button("Register evidence",type="primary",disabled=not _can_manage())
         if submit:
@@ -235,7 +236,7 @@ def render_document_centre(conn):
         if documents.empty: st.info("Upload the first evidence document to open it here.")
         else:
             role=st.session_state.get("role","VIEWER")
-            if role in RESTRICTED_ROLES:
+            if can(role, "VIEW_RESTRICTED_DOCUMENTS"):
                 visible=documents.copy()
             else:
                 allowed_rows=documents["confidentiality"].astype(str).ne("RESTRICTED")
@@ -267,7 +268,7 @@ def render_document_centre(conn):
     with archived:
         role=st.session_state.get("role","VIEWER")
         archived_documents=documents.loc[documents["status"].astype(str).eq("ARCHIVED")].copy() if not documents.empty else documents.copy()
-        if role not in RESTRICTED_ROLES and not archived_documents.empty:
+        if not can(role, "VIEW_RESTRICTED_DOCUMENTS") and not archived_documents.empty:
             allowed_rows=archived_documents["confidentiality"].astype(str).ne("RESTRICTED")
             archived_documents=archived_documents.loc[allowed_rows].copy()
         if archived_documents.empty:
