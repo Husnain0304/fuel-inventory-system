@@ -112,9 +112,9 @@ def render_notification_menu(conn):
 
     st.markdown("""<style>
     div[data-testid="stPopover"] > button {
-        min-height:44px; border-radius:999px; border:1px solid #d9dee8;
+        min-height:46px; min-width:58px; border-radius:999px; border:1px solid #cbd3df;
         background:#fff; box-shadow:0 8px 22px rgba(15,23,42,.08);
-        color:#172033; font-weight:700; padding:.55rem 1rem;
+        color:#172033; font-size:1.05rem; font-weight:800; padding:.55rem 1rem;
     }
     div[data-testid="stPopover"] > button:hover {border-color:#a51f24; color:#991b1f;}
     div[data-testid="stPopoverBody"] {min-width:min(470px,92vw);}

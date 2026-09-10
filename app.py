@@ -135,6 +135,8 @@ selected=st.session_state["main_navigation"]
 page = menu[selected]
 notification_space, notification_control = st.columns([8, 1], vertical_alignment="center")
 with notification_control:
+    # Keep the control below Streamlit's floating application header.
+    st.markdown("<div style='height:2.25rem'></div>", unsafe_allow_html=True)
     render_notification_menu(conn)
 render_request_confirmation()
 st.sidebar.divider()
