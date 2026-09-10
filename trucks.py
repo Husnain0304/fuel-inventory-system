@@ -5,6 +5,7 @@ import pandas as pd
 import streamlit as st
 
 from audit import record_event
+from ui import excel_download
 
 
 def _inventory(conn):
@@ -258,6 +259,10 @@ def render_trucks(conn, cursor):
         if view.empty:
             st.warning("No trucks match the current search and filters.")
             return
+
+        fleet_export=view[["truck","product","operational_status","balance","capacity_liters","utilization","available_space","minimum_stock_liters","reorder_level_liters","stock_condition","last_movement"]].copy()
+        fleet_export.columns=["Truck","Product","Operating status","Live inventory (L)","Capacity (L)","Utilization (%)","Available space (L)","Minimum stock (L)","Reorder level (L)","Stock condition","Last movement"]
+        excel_download(fleet_export,"Download filtered fleet in Excel")
 
         st.markdown("""
         <style>

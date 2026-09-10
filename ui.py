@@ -1,5 +1,8 @@
 from html import escape
+from io import BytesIO
 from numbers import Number
+import re
+from datetime import date, datetime
 
 import pandas as pd
 import streamlit as st
@@ -9,6 +12,55 @@ from branding import DEFAULT_PROFILE
 INK = "#172033"
 RED = "#8C1C1C"
 GREEN = "#0B8F55"
+
+
+def _excel_export(frame, title):
+    export = pd.DataFrame(frame).copy()
+    def clean_value(value):
+        if isinstance(value, (list, dict, set, tuple)):
+            return str(value)
+        if isinstance(value, (pd.Timestamp, datetime, date)):
+            return str(value)
+        return value
+    for column in export.columns:
+        if pd.api.types.is_datetime64_any_dtype(export[column]):
+            export[column] = export[column].astype(str)
+        else:
+            export[column] = export[column].map(clean_value)
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        export.to_excel(writer, index=False, sheet_name="Data")
+        sheet = writer.book["Data"]
+        sheet.freeze_panes = "A2"
+        sheet.auto_filter.ref = sheet.dimensions
+        from openpyxl.styles import Alignment, Font, PatternFill
+        for cell in sheet[1]:
+            cell.fill = PatternFill("solid", fgColor="172033")
+            cell.font = Font(color="FFFFFF", bold=True)
+            cell.alignment = Alignment(wrap_text=True, vertical="center")
+        sheet.row_dimensions[1].height = 30
+        for column_cells in sheet.columns:
+            letter = column_cells[0].column_letter
+            width = max(len(str(column_cells[0].value or "")), *(len(str(cell.value or "")) for cell in column_cells[1:])) + 2
+            sheet.column_dimensions[letter].width = min(max(width, 12), 42)
+    return output.getvalue()
+
+
+def _render_excel_download(frame, label="Download this data in Excel"):
+    index = int(st.session_state.get("_premium_download_index", 0)) + 1
+    st.session_state["_premium_download_index"] = index
+    page = str(st.session_state.get("main_navigation", "dashboard"))
+    slug = re.sub(r"[^a-z0-9]+", "_", page.lower()).strip("_") or "dashboard"
+    st.download_button(
+        label, _excel_export(frame, page), f"{slug}_data_{index:02d}.xlsx",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        key=f"premium_excel_download_{index}", use_container_width=False,
+    )
+
+
+def excel_download(frame, label="Download this data in Excel"):
+    """Add the dashboard-standard Excel export to a custom graphical list."""
+    _render_excel_download(pd.DataFrame(frame), label)
 
 
 def _display_label(column, config):
@@ -41,6 +93,8 @@ def _install_premium_dataframes():
     """Render read-only data as separated record rows instead of spreadsheet grids."""
     if not hasattr(st, "_fillit_original_dataframe"):
         st._fillit_original_dataframe = st.dataframe
+    if not hasattr(st, "_fillit_original_data_editor"):
+        st._fillit_original_data_editor = st.data_editor
     if getattr(st, "_fillit_premium_dataframe_active", False):
         return
 
@@ -100,9 +154,18 @@ def _install_premium_dataframes():
         )
         if len(frame) > maximum_rows:
             st.caption(f"Showing the first {maximum_rows:,} of {len(frame):,} records. Use the page filters or download the complete report for all records.")
+        _render_excel_download(frame)
         return None
 
     st.dataframe = premium_dataframe
+    def premium_data_editor(data=None, *args, **kwargs):
+        result = st._fillit_original_data_editor(data, *args, **kwargs)
+        try:
+            _render_excel_download(pd.DataFrame(result), "Download editable data in Excel")
+        except Exception:
+            pass
+        return result
+    st.data_editor = premium_data_editor
     st._fillit_premium_dataframe_active = True
 
 
@@ -115,6 +178,7 @@ def apply_theme(company=None):
     primary = company.get("primary_color", RED)
     secondary = company.get("secondary_color", INK)
     accent = company.get("accent_color", GREEN)
+    st.session_state["_premium_download_index"] = 0
     st.markdown(f"""
     <style>
     :root{{--primary:{primary};--secondary:{secondary};--accent:{accent};--ink:#111827;--muted:#667085;--line:#E4E7EC;--canvas:#F3F5F8;}}
