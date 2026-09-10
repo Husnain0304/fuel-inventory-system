@@ -101,6 +101,68 @@ def unread_count(conn):
     return int(cursor.fetchone()[0])
 
 
+def render_notification_menu(conn):
+    """Render the compact notification inbox used in the top-right app toolbar."""
+    username, approval_member = _audience()
+    data = pd.read_sql_query("""SELECT id,notification_type,title,message,source_type,source_id,target_page,
+        is_read,created_at,created_by FROM user_notifications
+        WHERE LOWER(recipient_username)=LOWER(%s) OR (recipient_group='APPROVAL_TEAM' AND %s)
+        ORDER BY is_read,created_at DESC,id DESC LIMIT 100""", conn, params=[username, approval_member])
+    unread = int((~data["is_read"]).sum()) if not data.empty else 0
+
+    st.markdown("""<style>
+    div[data-testid="stPopover"] > button {
+        min-height:44px; border-radius:999px; border:1px solid #d9dee8;
+        background:#fff; box-shadow:0 8px 22px rgba(15,23,42,.08);
+        color:#172033; font-weight:700; padding:.55rem 1rem;
+    }
+    div[data-testid="stPopover"] > button:hover {border-color:#a51f24; color:#991b1f;}
+    div[data-testid="stPopoverBody"] {min-width:min(470px,92vw);}
+    .notification-menu-title {font-size:1.15rem;font-weight:800;color:#172033;margin:.1rem 0 0;}
+    .notification-menu-subtitle {font-size:.82rem;color:#718096;margin:.15rem 0 .7rem;}
+    </style>""", unsafe_allow_html=True)
+
+    label = f"🔔  {unread}" if unread else "🔔"
+    with st.popover(label, help="Open notifications"):
+        st.markdown('<div class="notification-menu-title">Notifications</div>', unsafe_allow_html=True)
+        st.markdown('<div class="notification-menu-subtitle">Updates, decisions and requests requiring your attention</div>', unsafe_allow_html=True)
+        all_tab, unread_tab = st.tabs([f"All ({len(data)})", f"Unread ({unread})"])
+
+        def render_items(view, key_prefix):
+            if view.empty:
+                st.info("No notifications here.")
+                return
+            for item in view.head(12).itertuples():
+                tone = "✅" if item.notification_type == "APPROVED" else ("⛔" if item.notification_type == "REJECTED" else "🔔")
+                with st.container(border=True):
+                    title_col, state_col = st.columns([5, 1])
+                    title_col.markdown(f"**{tone} {item.title}**")
+                    state_col.caption("NEW" if not item.is_read else "READ")
+                    st.write(item.message)
+                    st.caption(f"{pd.to_datetime(item.created_at):%d %b %Y · %H:%M}  ·  {item.created_by or 'System'}")
+                    action_col, read_col = st.columns([1, 1])
+                    if item.target_page and action_col.button("Open", key=f"{key_prefix}_open_{item.id}", use_container_width=True, type="primary"):
+                        _mark_read(conn, int(item.id))
+                        st.session_state["navigation_target"] = item.target_page
+                        st.rerun()
+                    if not item.is_read and read_col.button("Mark read", key=f"{key_prefix}_read_{item.id}", use_container_width=True):
+                        _mark_read(conn, int(item.id))
+                        st.rerun()
+
+        with all_tab:
+            render_items(data, "notice_all")
+        with unread_tab:
+            unread_data = data[~data["is_read"]] if not data.empty else data
+            render_items(unread_data, "notice_unread")
+
+        if unread and st.button("Mark all as read", key="notice_menu_mark_all", use_container_width=True):
+            _mark_read(conn)
+            st.rerun()
+        if st.button("Open Notification Centre", key="notice_menu_open_centre", use_container_width=True):
+            st.session_state["navigation_target"] = "Notifications"
+            st.rerun()
+
+
 def _mark_read(conn, notification_id=None):
     username, approval_member = _audience()
     cursor = conn.cursor()

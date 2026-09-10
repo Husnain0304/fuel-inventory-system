@@ -21,7 +21,7 @@ from trucks import render_trucks
 from ui import apply_theme, page_header, render_sidebar_brand
 from users_admin import render_user_management
 from approval_workflow import ensure_approval_schema, process_approval_escalations, render_approval_centre
-from user_notifications import ensure_notification_schema, render_notifications, render_request_confirmation, unread_count
+from user_notifications import ensure_notification_schema, render_notification_menu, render_notifications, render_request_confirmation
 from valuation import ensure_valuation_schema, render_valuation
 from period_close import ensure_period_close_schema, render_period_close
 from document_centre import DOCUMENT_CENTRE_VERSION, ensure_document_schema, render_document_centre
@@ -104,10 +104,6 @@ active_page=st.session_state["main_navigation"]
 if st.sidebar.button("⌂  Command Centre",use_container_width=True,type="primary" if active_page=="Command Centre" else "secondary",key="nav_command_centre"):
     open_page("Command Centre")
 
-notice_total=unread_count(conn)
-if notice_total:
-    st.sidebar.info(f"🔔 {notice_total} unread notification{'s' if notice_total != 1 else ''}")
-
 navigation_groups={
     "Stock Operations":["Fuel Operations","Fleet Inventory","Inventory Control","Measurement & Loss Control","Transaction Control"],
     "Storage Network":["Depots & Storage","Storage Operations","Stock in Transit"],
@@ -127,6 +123,9 @@ for group,items in navigation_groups.items():
 
 selected=st.session_state["main_navigation"]
 page = menu[selected]
+notification_space, notification_control = st.columns([8, 1], vertical_alignment="center")
+with notification_control:
+    render_notification_menu(conn)
 render_request_confirmation()
 st.sidebar.divider()
 st.sidebar.caption(f"Signed in as {st.session_state['user']} · {st.session_state['role'].title()}")
