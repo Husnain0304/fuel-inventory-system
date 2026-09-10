@@ -63,4 +63,11 @@ def send_user_invitation(recipient, username, temporary_password, role_label, co
                 server.send_message(message)
         return True, "Invitation email sent successfully."
     except Exception as error:
-        return False, f"Email could not be sent: {error}"
+        detail = str(error)
+        if "535" in detail or "BadCredentials" in detail or "Username and Password not accepted" in detail:
+            detail = "Gmail rejected the sender login. Use a Google App Password, or share the invitation manually."
+        elif "timed out" in detail.lower():
+            detail = "The email server did not respond in time. Please try again, or share the invitation manually."
+        else:
+            detail = "The email service could not deliver this invitation. Please verify the email settings or share it manually."
+        return False, detail

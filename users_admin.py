@@ -9,7 +9,6 @@ from audit import record_event
 from email_service import clean_app_url, email_is_configured, send_user_invitation
 from rbac import ROLE_LABELS, ROLES, allowed_pages, ensure_rbac_schema
 from security import hash_password, validate_username
-from ui import page_header
 
 
 EMAIL_PATTERN = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
@@ -53,8 +52,10 @@ def _create_user(conn, cursor, username, email, phone, role):
         company.get("company_name", "Company"), company.get("application_name", "Fuel Inventory Control"),
     )
     if sent:
-        cursor.execute("UPDATE users SET invitation_sent_at=CURRENT_TIMESTAMP WHERE id=%s", (user_id,))
-        conn.commit()
+        cursor.execute("UPDATE users SET invitation_sent_at=CURRENT_TIMESTAMP,invitation_status='SENT',invitation_last_error=NULL WHERE id=%s", (user_id,))
+    else:
+        cursor.execute("UPDATE users SET invitation_status='MANUAL_REQUIRED',invitation_last_error=%s WHERE id=%s", (message, user_id))
+    conn.commit()
     record_event(conn, "CREATE_USER", "Security", "User", user_id,
                  f"Created {username} with role {role}; invitation {'sent' if sent else 'requires manual delivery'}")
     st.session_state["new_user_invitation"] = {
@@ -65,15 +66,23 @@ def _create_user(conn, cursor, username, email, phone, role):
 
 def render_user_management(conn, cursor):
     ensure_rbac_schema(conn)
-    page_header("User Access & Permissions", "Create accounts, deliver secure invitations and control workspace access.")
     users = pd.read_sql_query(
         """SELECT id,username,email,phone_number,role,COALESCE(active,TRUE) AS active,
                   COALESCE(must_change_password,FALSE) AS must_change_password,
-                  invitation_sent_at,password_changed_at FROM users ORDER BY username""", conn,
+                  invitation_sent_at,COALESCE(invitation_status,'NOT_SENT') AS invitation_status,
+                  invitation_last_error,password_changed_at FROM users ORDER BY username""", conn,
     )
     _show_invitation_result()
     tab_users, tab_matrix = st.tabs(["User accounts", "Permission matrix"])
     with tab_users:
+        active_total = int(users["active"].sum()) if not users.empty else 0
+        setup_pending = int(users["must_change_password"].sum()) if not users.empty else 0
+        invitation_attention = int((users["invitation_status"] == "MANUAL_REQUIRED").sum()) if not users.empty else 0
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("Total accounts", len(users))
+        m2.metric("Active", active_total)
+        m3.metric("Password setup pending", setup_pending)
+        m4.metric("Invitation attention", invitation_attention)
         if email_is_configured():
             st.success("Automatic invitation email is configured and ready.")
         else:
@@ -104,12 +113,18 @@ def render_user_management(conn, cursor):
         if users.empty:
             st.info("No users found.")
         else:
+            filter_status = st.segmented_control("Show accounts", ["All", "Active", "Inactive", "Setup pending"], default="All")
+            filtered_users = users
+            if filter_status == "Active": filtered_users = users[users["active"]]
+            elif filter_status == "Inactive": filtered_users = users[~users["active"]]
+            elif filter_status == "Setup pending": filtered_users = users[users["must_change_password"]]
             display = users.copy()
             display["status"] = display["active"].map({True: "ACTIVE", False: "INACTIVE"})
-            display["password_status"] = display["must_change_password"].map({True: "TEMPORARY", False: "PRIVATE"})
-            st.dataframe(display[["username", "email", "phone_number", "role", "status", "password_status", "invitation_sent_at", "password_changed_at"]],
+            display["password_status"] = display["must_change_password"].map({True: "CHANGE REQUIRED", False: "COMPLETE"})
+            display = display[display["id"].isin(filtered_users["id"])]
+            st.dataframe(display[["username", "email", "phone_number", "role", "status", "password_status", "invitation_status", "invitation_sent_at", "password_changed_at"]],
                          use_container_width=True, hide_index=True, height=390,
-                         column_config={"username": "Username", "email": "Email", "phone_number": "Phone", "role": "Role", "status": "Status", "password_status": "Password", "invitation_sent_at": "Invitation Sent", "password_changed_at": "Password Changed"})
+                         column_config={"username": "Username", "email": "Email", "phone_number": "Phone", "role": "Role", "status": "Account", "password_status": "Password setup", "invitation_status": "Invitation", "invitation_sent_at": "Last sent", "password_changed_at": "Password changed"})
             options = {f"{row.username} · {ROLE_LABELS.get(row.role,row.role)} · {'Active' if row.active else 'Inactive'}": row for row in users.itertuples()}
             account = options[st.selectbox("Manage account", list(options))]
             account_email = str(account.email).strip() if pd.notna(account.email) else ""
@@ -142,10 +157,10 @@ def render_user_management(conn, cursor):
                     except Exception:
                         conn.rollback()
                         st.error("Account could not be updated.")
-            with st.expander("Issue a new temporary password"):
-                st.warning("This signs the user out everywhere and requires a new private password after the next login.")
+            with st.expander("Reset password and resend invitation"):
+                st.warning("This creates a new temporary password, signs the user out everywhere and requires a new private password after login.")
                 confirm_reset = st.checkbox(f"Confirm password reset for {account.username}")
-                if st.button("Generate and email temporary password", disabled=not confirm_reset, type="primary"):
+                if st.button("Reset password and send invitation", disabled=not confirm_reset, type="primary"):
                     if not account_email:
                         st.error("Add an email address to this account first.")
                     else:
@@ -156,8 +171,10 @@ def render_user_management(conn, cursor):
                         company = st.session_state.get("company_profile", {})
                         sent, message = send_user_invitation(account_email, account.username, temporary_password, ROLE_LABELS.get(account.role, account.role), company.get("company_name", "Company"), company.get("application_name", "Fuel Inventory Control"))
                         if sent:
-                            cursor.execute("UPDATE users SET invitation_sent_at=CURRENT_TIMESTAMP WHERE id=%s", (account.id,))
-                            conn.commit()
+                            cursor.execute("UPDATE users SET invitation_sent_at=CURRENT_TIMESTAMP,invitation_status='SENT',invitation_last_error=NULL WHERE id=%s", (account.id,))
+                        else:
+                            cursor.execute("UPDATE users SET invitation_status='MANUAL_REQUIRED',invitation_last_error=%s WHERE id=%s", (message, account.id))
+                        conn.commit()
                         record_event(conn, "RESET_USER_PASSWORD", "Security", "User", account.id, f"Issued temporary password; invitation {'sent' if sent else 'requires manual delivery'}", severity="WARNING")
                         if sent:
                             st.success("A new temporary password was emailed to the user.")

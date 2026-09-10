@@ -294,6 +294,8 @@ def init_db(_conn) -> bool:
             "ALTER TABLE users ADD COLUMN IF NOT EXISTS phone_number TEXT",
             "ALTER TABLE users ADD COLUMN IF NOT EXISTS must_change_password BOOLEAN NOT NULL DEFAULT FALSE",
             "ALTER TABLE users ADD COLUMN IF NOT EXISTS invitation_sent_at TIMESTAMPTZ",
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS invitation_status TEXT NOT NULL DEFAULT 'NOT_SENT'",
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS invitation_last_error TEXT",
             "ALTER TABLE users ADD COLUMN IF NOT EXISTS password_changed_at TIMESTAMPTZ",
         )
         for statement in migrations:
