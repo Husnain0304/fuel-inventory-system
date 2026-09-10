@@ -95,8 +95,6 @@ def _install_premium_dataframes():
         st._fillit_original_dataframe = st.dataframe
     if not hasattr(st, "_fillit_original_data_editor"):
         st._fillit_original_data_editor = st.data_editor
-    if getattr(st, "_fillit_premium_dataframe_active", False):
-        return
 
     def premium_dataframe(data=None, *args, **kwargs):
         try:
@@ -115,6 +113,8 @@ def _install_premium_dataframes():
         if frame.empty:
             st.markdown('<div class="premium-empty-records">No records available</div>', unsafe_allow_html=True)
             return None
+
+        _render_excel_download(frame, "Download current list in Excel")
 
         maximum_rows = 300
         visible = frame[columns].head(maximum_rows)
@@ -154,7 +154,6 @@ def _install_premium_dataframes():
         )
         if len(frame) > maximum_rows:
             st.caption(f"Showing the first {maximum_rows:,} of {len(frame):,} records. Use the page filters or download the complete report for all records.")
-        _render_excel_download(frame)
         return None
 
     st.dataframe = premium_dataframe
