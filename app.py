@@ -21,7 +21,17 @@ from trucks import render_trucks
 from ui import apply_theme, page_header, render_sidebar_brand
 from users_admin import render_user_management
 from approval_workflow import ensure_approval_schema, process_approval_escalations, render_approval_centre
-from user_notifications import ensure_notification_schema, render_notification_menu, render_notifications, render_request_confirmation
+from user_notifications import ensure_notification_schema, render_notifications, render_request_confirmation, unread_count
+try:
+    from user_notifications import render_notification_menu
+except ImportError:
+    # Keeps the application available during a two-file rolling deployment.
+    def render_notification_menu(conn):
+        total = unread_count(conn)
+        label = f"🔔  {total}" if total else "🔔"
+        if st.button(label, key="notification_compatibility_button", help="Open notifications"):
+            st.session_state["navigation_target"] = "Notifications"
+            st.rerun()
 from valuation import ensure_valuation_schema, render_valuation
 from period_close import ensure_period_close_schema, render_period_close
 from document_centre import DOCUMENT_CENTRE_VERSION, ensure_document_schema, render_document_centre
