@@ -65,7 +65,8 @@ def _discover(conn):
     for row in negative.itertuples(): add("NEGATIVE_INVENTORY","CRITICAL",f"Negative inventory · {row.truck}",f"Calculated balance is {float(row.balance):,.2f} L.","TRUCK",row.id)
 
     closed=pd.read_sql_query("""SELECT tx.id,tx.date,p.period_name FROM transactions tx JOIN inventory_periods p
-        ON tx.date BETWEEN p.start_date AND p.end_date WHERE p.status='CLOSED' AND tx.created_at>p.closed_at
+        ON (CASE WHEN tx.date ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' THEN LEFT(tx.date,10)::date ELSE NULL END)
+           BETWEEN p.start_date AND p.end_date WHERE p.status='CLOSED' AND tx.created_at>p.closed_at
         AND COALESCE(tx.record_status,'POSTED')='POSTED'""",conn)
     for row in closed.itertuples(): add("CLOSED_PERIOD_TRANSACTION","CRITICAL",f"TX-{row.id} posted after period close",f"Transaction date {row.date} belongs to closed period {row.period_name}.","TRANSACTION",row.id)
 
