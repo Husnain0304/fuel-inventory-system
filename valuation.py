@@ -189,7 +189,11 @@ def render_valuation(conn):
     total_qty=float(position["Quantity (L)"].sum()) if not position.empty else 0; total_value=float(position["Inventory Value"].sum()) if not position.empty else 0
     issued=ledger[ledger["Direction"]=="OUT"] if not ledger.empty else ledger; issue_value=float(issued["Movement Value"].sum()) if not issued.empty else 0
     open_claims=float(claims.loc[~claims["status"].isin(["CLOSED","REJECTED"]),"claim_amount"].sum()) if not claims.empty else 0
-    a,b,c,d=st.columns(4); a.metric("Inventory quantity",f"{total_qty:,.2f} L"); b.metric("Inventory value",f"{currency} {total_value:,.2f}"); c.metric("Historical issued value",f"{currency} {issue_value:,.2f}"); d.metric("Open claim value",f"{currency} {open_claims:,.2f}")
+    a,b,c,d=st.columns(4)
+    a.metric("Inventory quantity (L)",f"{total_qty:,.2f}")
+    b.metric(f"Inventory value ({currency})",f"{total_value:,.2f}")
+    c.metric(f"Historical issued value ({currency})",f"{issue_value:,.2f}")
+    d.metric(f"Open claim value ({currency})",f"{open_claims:,.2f}")
     overview,movements,exposure,cost_policy,report=st.tabs(["Valuation position","Cost movement ledger","Supplier exposure","Cost policies","Financial report"])
     with overview:
         if position.empty: st.info("No inventory movements are available for valuation.")
