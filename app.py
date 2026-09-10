@@ -45,6 +45,7 @@ from storage_control import ensure_storage_control_schema, render_storage_contro
 from stock_transit import ensure_transit_schema, render_stock_transit
 from receipt_costing import ensure_receipt_cost_schema, render_receipt_costing
 from schema_bootstrap import initialize_application_schema
+from data_quality import render_data_quality, run_daily_data_quality_scan
 
 
 st.set_page_config(page_title="Fuel Inventory Control", page_icon="⛽", layout="wide", initial_sidebar_state="expanded")
@@ -56,6 +57,12 @@ st.session_state["company_profile"] = company
 apply_theme(company)
 require_login(conn)
 load_effective_permissions(conn)
+if not st.session_state.get("daily_data_quality_checked"):
+    try:
+        run_daily_data_quality_scan(conn)
+    except Exception:
+        conn.rollback()
+    st.session_state["daily_data_quality_checked"] = True
 if not st.session_state.get("approval_escalation_checked"):
     process_approval_escalations(conn)
     st.session_state["approval_escalation_checked"] = True
@@ -82,6 +89,7 @@ menu = {
     "Financial Valuation": "Valuation",
     "Month-End Closing": "Period Closing",
     "Inventory Health": "Inventory Health",
+    "Data Quality Centre": "Data Quality",
     "Evidence Centre": "Evidence Centre",
     "Truck Ledger": "Ledger",
     "Integration Inbox": "Bulk Upload",
@@ -120,10 +128,10 @@ navigation_groups={
     "Storage Network":["Depots & Storage","Storage Operations","Stock in Transit"],
     "Supply & Quality":["Supplier Procurement","Supplier Master","Supplier Scorecards","Receipt Costing","Product & Quality","Batch Aging & FEFO"],
     "Planning & Finance":["Stock Commitments","Inventory Forecasting","Financial Valuation","Month-End Closing","Inventory Health"],
-    "Control & Assurance":["Evidence Centre","Truck Ledger","Integration Inbox","Approvals","Notifications","Report Centre","Audit Centre"],
+    "Control & Assurance":["Data Quality Centre","Evidence Centre","Truck Ledger","Integration Inbox","Approvals","Notifications","Report Centre","Audit Centre"],
     "Administration":["Configuration","User Access"],
 }
-icons={"Fuel Operations":"⇅","Fleet Inventory":"▣","Inventory Control":"✓","Measurement & Loss Control":"≋","Transaction Control":"↺","Depots & Storage":"▦","Storage Operations":"⇵","Stock in Transit":"→","Supplier Procurement":"◇","Supplier Master":"◎","Supplier Scorecards":"◔","Receipt Costing":"€","Product & Quality":"⚗","Batch Aging & FEFO":"⌛","Stock Commitments":"◈","Inventory Forecasting":"∿","Financial Valuation":"◉","Month-End Closing":"▤","Inventory Health":"♥","Evidence Centre":"▧","Truck Ledger":"≡","Integration Inbox":"⇩","Approvals":"✔","Notifications":"●","Report Centre":"▥","Audit Centre":"⌕","Configuration":"⚙","User Access":"◇"}
+icons={"Fuel Operations":"⇅","Fleet Inventory":"▣","Inventory Control":"✓","Measurement & Loss Control":"≋","Transaction Control":"↺","Depots & Storage":"▦","Storage Operations":"⇵","Stock in Transit":"→","Supplier Procurement":"◇","Supplier Master":"◎","Supplier Scorecards":"◔","Receipt Costing":"€","Product & Quality":"⚗","Batch Aging & FEFO":"⌛","Stock Commitments":"◈","Inventory Forecasting":"∿","Financial Valuation":"◉","Month-End Closing":"▤","Inventory Health":"♥","Data Quality Centre":"◆","Evidence Centre":"▧","Truck Ledger":"≡","Integration Inbox":"⇩","Approvals":"✔","Notifications":"●","Report Centre":"▥","Audit Centre":"⌕","Configuration":"⚙","User Access":"◇"}
 for group,items in navigation_groups.items():
     visible=[item for item in items if item in labels]
     if not visible: continue
@@ -192,6 +200,8 @@ elif page == "Period Closing":
     render_period_close(conn)
 elif page == "Inventory Health":
     render_inventory_health(conn)
+elif page == "Data Quality":
+    render_data_quality(conn)
 elif page == "Evidence Centre":
     render_document_centre(conn)
 elif page == "Reports":

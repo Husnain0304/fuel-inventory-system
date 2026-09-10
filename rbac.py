@@ -4,7 +4,7 @@ import streamlit as st
 
 ROLES = ["ADMIN", "INVENTORY_MANAGER", "STOREKEEPER", "PROCUREMENT_USER", "APPROVER", "AUDITOR", "VIEWER", "OPERATOR"]
 ROLE_LABELS = {"ADMIN": "Administrator", "INVENTORY_MANAGER": "Inventory Manager", "STOREKEEPER": "Storekeeper", "PROCUREMENT_USER": "Procurement User", "APPROVER": "Approver", "AUDITOR": "Auditor", "VIEWER": "Read-only Viewer", "OPERATOR": "Legacy Operator"}
-ALL_PAGES = {"Command Centre", "Fuel Operations", "Fleet Inventory", "Inventory Control", "Measurement & Loss Control", "Transaction Control", "Depots & Storage", "Storage Operations", "Stock in Transit", "Supplier Procurement", "Supplier Master", "Supplier Scorecards", "Receipt Costing", "Product & Quality", "Batch Aging & FEFO", "Stock Commitments", "Inventory Forecasting", "Financial Valuation", "Month-End Closing", "Inventory Health", "Evidence Centre", "Truck Ledger", "Integration Inbox", "Approvals", "Notifications", "Report Centre", "Audit Centre", "Configuration", "User Access"}
+ALL_PAGES = {"Command Centre", "Fuel Operations", "Fleet Inventory", "Inventory Control", "Measurement & Loss Control", "Transaction Control", "Depots & Storage", "Storage Operations", "Stock in Transit", "Supplier Procurement", "Supplier Master", "Supplier Scorecards", "Receipt Costing", "Product & Quality", "Batch Aging & FEFO", "Stock Commitments", "Inventory Forecasting", "Financial Valuation", "Month-End Closing", "Inventory Health", "Data Quality Centre", "Evidence Centre", "Truck Ledger", "Integration Inbox", "Approvals", "Notifications", "Report Centre", "Audit Centre", "Configuration", "User Access"}
 ALL_ACTIONS = {"VIEW", "CREATE", "EDIT", "IMPORT", "EXPORT", "APPROVE", "REJECT", "POST_MOVEMENT", "POST_RECEIPT", "POST_TRANSFER", "RECONCILE", "CREATE_BOOKING", "CREATE_RELEASE", "UPDATE_CLAIM", "REVIEW_RECONCILIATION", "REVIEW_CHANGE", "MANAGE_DOCUMENTS", "VIEW_RESTRICTED_DOCUMENTS", "MANAGE_QUALITY", "DECIDE_QUALITY", "EDIT_BATCH", "MANAGE_SUPPLIERS"}
 PAGE_PERMISSIONS = {
     "INVENTORY_MANAGER": ALL_PAGES - {"User Access", "Configuration"},
@@ -36,6 +36,7 @@ def ensure_rbac_schema(conn):
         cursor.execute("CREATE TABLE IF NOT EXISTS security_role_pages(role_code TEXT NOT NULL REFERENCES security_roles(role_code) ON DELETE CASCADE,page_name TEXT NOT NULL,PRIMARY KEY(role_code,page_name))")
         cursor.execute("CREATE TABLE IF NOT EXISTS security_role_actions(role_code TEXT NOT NULL REFERENCES security_roles(role_code) ON DELETE CASCADE,action_name TEXT NOT NULL,PRIMARY KEY(role_code,action_name))")
         cursor.execute("CREATE TABLE IF NOT EXISTS security_user_overrides(user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,permission_type TEXT NOT NULL CHECK(permission_type IN ('PAGE','ACTION')),permission_name TEXT NOT NULL,effect TEXT NOT NULL CHECK(effect IN ('ALLOW','DENY')),updated_by TEXT,updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,PRIMARY KEY(user_id,permission_type,permission_name))")
+        cursor.execute("CREATE TABLE IF NOT EXISTS security_rbac_migrations(migration_key TEXT PRIMARY KEY,applied_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP)")
         for code in ROLES:
             cursor.execute("INSERT INTO security_roles(role_code,role_name,description,is_system,created_by) VALUES(%s,%s,'Built-in role',TRUE,'System') ON CONFLICT(role_code) DO NOTHING RETURNING role_code", (code, ROLE_LABELS[code]))
             if not cursor.fetchone():
@@ -44,6 +45,10 @@ def ensure_rbac_schema(conn):
             actions = ALL_ACTIONS if code == "ADMIN" or "*" in ACTION_PERMISSIONS.get(code, set()) else ACTION_PERMISSIONS.get(code, set())
             for item in pages: cursor.execute("INSERT INTO security_role_pages(role_code,page_name) VALUES(%s,%s) ON CONFLICT DO NOTHING", (code, item))
             for item in actions: cursor.execute("INSERT INTO security_role_actions(role_code,action_name) VALUES(%s,%s) ON CONFLICT DO NOTHING", (code, item))
+        cursor.execute("INSERT INTO security_rbac_migrations(migration_key) VALUES('ADD_DATA_QUALITY_PAGE_V1') ON CONFLICT DO NOTHING RETURNING migration_key")
+        if cursor.fetchone():
+            for code in ("ADMIN","INVENTORY_MANAGER","APPROVER","AUDITOR"):
+                cursor.execute("INSERT INTO security_role_pages(role_code,page_name) VALUES(%s,'Data Quality Centre') ON CONFLICT DO NOTHING",(code,))
         conn.commit()
     except Exception:
         conn.rollback(); raise
